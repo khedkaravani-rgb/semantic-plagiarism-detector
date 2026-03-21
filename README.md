@@ -17,8 +17,6 @@ similarity, and **FAISS vector search**.
 ### Similarity Heatmap
 ![Heatmap](screenshots/screenshot_3_heatmap.png)
 
-### FAISS Chunk Search
-![FAISS](screenshots/screenshot_4_faiss.png)
 
 ---
 

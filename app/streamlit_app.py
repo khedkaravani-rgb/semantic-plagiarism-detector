@@ -17,7 +17,7 @@ from utils.similarity      import (
     document_similarity_matrix, flag_plagiarism,
     find_most_similar_chunks, PLAGIARISM_THRESHOLD,
 )
-from utils.heatmap      import plot_similarity_heatmap, plot_chunk_similarity_comparison
+from utils.heatmap      import plot_similarity_heatmap, plot_similarity_heatmap_plotly, plot_chunk_similarity_comparison
 from utils.faiss_index  import build_index, find_plagiarised_chunks, search_similar_chunks
 
 st.set_page_config(
@@ -303,13 +303,32 @@ with tab_matrix:
 # ══ TAB 4 ════════════════════════════════════════════════════════════════════
 with tab_heatmap:
     st.subheader("🗺️ Similarity Heatmap")
-    fig = plot_similarity_heatmap(active_sim_df, title="Document Semantic Similarity",
-                                  threshold=threshold)
-    st.pyplot(fig, use_container_width=True)
+    hm_col1, hm_col2 = st.columns(2)
+    with hm_col1:
+        interactive = st.checkbox("Interactive mode (hover values)", value=True,
+                                  help="Plotly chart with hover tooltips. Uncheck for static view.")
+
+    if interactive:
+        plotly_fig = plot_similarity_heatmap_plotly(
+            active_sim_df, title="Document Semantic Similarity", threshold=threshold
+        )
+        st.plotly_chart(plotly_fig, use_container_width=True)
+        st.caption("💡 Hover over any cell to see exact similarity. Red borders = flagged pairs.")
+    else:
+        fig = plot_similarity_heatmap(
+            active_sim_df, title="Document Semantic Similarity",
+            threshold=threshold, annotate=True, dpi=200,
+        )
+        st.pyplot(fig, use_container_width=True)
+
     buf = _io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    static_fig = plot_similarity_heatmap(
+        active_sim_df, title="Document Semantic Similarity",
+        threshold=threshold, annotate=True, dpi=200,
+    )
+    static_fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
     buf.seek(0)
-    st.download_button("⬇️ Download PNG", buf, "heatmap.png", "image/png")
+    st.download_button("⬇️ Download High-Res PNG", buf, "heatmap.png", "image/png")
 
 # ══ TAB 5 ════════════════════════════════════════════════════════════════════
 with tab_drill:

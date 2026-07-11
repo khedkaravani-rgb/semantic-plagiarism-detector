@@ -16,6 +16,7 @@ from .similarity import (
 )
 from .heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
 from .network_graph import plot_similarity_network
+from .translator import translate_text
 from .faiss_index import (
     build_index,
     search_similar_chunks,
@@ -33,7 +34,7 @@ __all__ = [
     "document_similarity_matrix", "chunk_similarity_matrix",
     "flag_plagiarism", "find_most_similar_chunks", "PLAGIARISM_THRESHOLD",
     "plot_similarity_heatmap", "plot_chunk_similarity_comparison",
-    "plot_similarity_network",
+    "plot_similarity_network", "translate_text",
     "build_index", "search_similar_chunks", "find_plagiarised_chunks",
     "save_index", "load_index", "ChunkRecord",
 ]

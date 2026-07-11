@@ -36,6 +36,24 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
     .stAlert { border-radius: 8px; }
+    
+    /* File uploader custom premium styling */
+    div[data-testid="stFileUploader"] {
+        border: 2px dashed #30363d !important;
+        background-color: #0d1117 !important;
+        border-radius: 15px !important;
+        padding: 24px !important;
+        transition: all 0.3s ease-in-out !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+    }
+    div[data-testid="stFileUploader"]:hover {
+        border-color: #388bfd !important;
+        background-color: #161b22 !important;
+        box-shadow: 0 8px 30px rgba(56, 139, 253, 0.15) !important;
+    }
+    div[data-testid="stFileUploader"] section {
+        background: transparent !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -218,6 +236,16 @@ uploaded_files = st.file_uploader(
     "📂 Upload Assignment Documents", type=["pdf", "docx", "txt"],
     accept_multiple_files=True, help="Upload 2 or more files (PDF, DOCX, TXT).",
 )
+if uploaded_files:
+    # Show uploaded file count
+    st.success(f"✅ {len(uploaded_files)} files uploaded successfully!")
+    
+    # List uploaded file names cleanly
+    with st.expander("📁 View Uploaded Files List", expanded=False):
+        for f in uploaded_files:
+            size_kb = len(f.getvalue()) / 1024
+            st.markdown(f"- 📄 **{f.name}** ({size_kb:.1f} KB)")
+
 if not uploaded_files or len(uploaded_files) < 2:
     st.info("👆 Please upload **at least 2** document files to begin.")
     st.stop()
@@ -251,9 +279,15 @@ def run_pipeline(file_bytes_dict: dict):
 
 file_bytes_dict = {f.name: f.read() for f in uploaded_files}
 
-with st.spinner("🧠 Processing PDFs, building embeddings and FAISS index…"):
+# Display upload/processing progress
+with st.status("🧠 Processing documents...", expanded=True) as status:
+    status.write("📖 Reading uploaded files...")
     raw_texts, chunked_docs, embeddings, sim_df, chunk_sim_df, faiss_index, registry = \
         run_pipeline(file_bytes_dict)
+    status.write("✂️ Chunking text into paragraphs...")
+    status.write("🧬 Generating semantic embeddings...")
+    status.write("⚡ Indexing vectors into FAISS...")
+    status.update(label="✅ Processing complete!", state="complete", expanded=False)
 
 # Check for empty documents (e.g. scanned images with no OCR, blank files)
 empty_docs = [name for name, text in raw_texts.items() if not text.strip()]

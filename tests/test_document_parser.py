@@ -1,6 +1,6 @@
 import io
 import pytest
-import PyPDF2
+import pypdf
 import docx
 from unittest.mock import MagicMock, patch
 from utils.document_parser import (
@@ -14,7 +14,7 @@ from utils.document_parser import (
 
 def _make_pdf_bytes(text: str) -> bytes:
     """Create a minimal in-memory PDF containing the given text."""
-    writer = PyPDF2.PdfWriter()
+    writer = pypdf.PdfWriter()
     page = writer.add_blank_page(width=200, height=200)
     buf = io.BytesIO()
     writer.write(buf)

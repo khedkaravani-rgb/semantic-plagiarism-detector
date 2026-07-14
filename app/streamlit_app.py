@@ -27,7 +27,6 @@ st.set_page_config(
     page_icon="🔍", layout="wide",
     initial_sidebar_state="expanded",
 )
-
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
@@ -93,7 +92,7 @@ with st.sidebar:
     if user_role == "admin":
         threshold = st.slider("Plagiarism Threshold", 0.50, 0.99,
                               value=PLAGIARISM_THRESHOLD, step=0.01,
-                              help="Cosine similarity above which a pair is flagged.")
+                              help="Cosine similarity above which a pair is flagged. (Recommended: 0.59 based on benchmark evaluation)")
         use_chunk_matrix = st.checkbox("Use chunk-level similarity matrix", value=False,
                                        help="Use MAX chunk-pair similarity instead of mean doc vectors.")
         faiss_top_k = st.slider("FAISS: matches per chunk", 1, 20, value=5,
@@ -116,6 +115,7 @@ with st.sidebar:
 6. Pairs above threshold flagged
 """)
     st.markdown("---")
+    st.caption("Semantic Plagiarism Detector · FAISS edition")
     
     # Log out button
     if st.button("🚪 Log Out", use_container_width=True):
@@ -139,7 +139,6 @@ if user_role != "admin":
     st.subheader("🔎 Secure Student Search Portal")
     st.caption("Paste a text snippet below to check its similarity against existing indexed assignments.")
     
-    # Secure Mock Dataset and FAISS index for search only fallback (so standard users can't see admin PDFs)
     st.info("🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access.")
     
     query_text = st.text_area("Paste a text snippet to check against index:", height=150,
@@ -150,14 +149,14 @@ if user_role != "admin":
 else:
     # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
     uploaded_files = st.file_uploader(
-        "📂 Upload Assignment PDFs (Admin Only)", type=["pdf"],
+        "📂 Upload Assignment PDFs", type=["pdf"],
         accept_multiple_files=True, help="Upload 2 or more PDF files.",
     )
     if not uploaded_files or len(uploaded_files) < 2:
         st.info("👆 Please upload **at least 2** PDF assignment files to begin.")
         st.stop()
 
-    # Pipeline (cached)
+    # ── Pipeline (cached) ─────────────────────────────────────────────────────────
     @st.cache_data(show_spinner=False)
     def run_pipeline(file_bytes_dict: dict):
         raw_texts = {
@@ -190,15 +189,15 @@ else:
         raw_texts, chunked_docs, embeddings, sim_df, chunk_sim_df, faiss_index, registry = \
             run_pipeline(file_bytes_dict)
 
-    # Check for empty PDFs
+    # Check for empty PDFs (e.g. scanned images with no OCR)
     empty_docs = [name for name, text in raw_texts.items() if not text.strip()]
     if empty_docs:
-        st.warning(f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}.")
+        st.warning(f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}. These might be scanned images or password-protected PDFs.")
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
     flags         = flag_plagiarism(active_sim_df, threshold=threshold)
 
-    # Summary metrics
+    # ── Summary metrics ───────────────────────────────────────────────────────────
     st.subheader("📊 Analysis Summary")
     col1, col2, col3, col4, col5 = st.columns(5)
     doc_names    = list(raw_texts.keys())
@@ -217,7 +216,7 @@ else:
     col5.metric("🗂️ FAISS Vectors", faiss_index.ntotal)
     st.divider()
 
-    # Render Tabs
+    # ── Tabs ──────────────────────────────────────────────────────────────────────
     tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill = st.tabs([
         "⚠️ Plagiarism Warnings",
         "⚡ FAISS Chunk Search",
@@ -226,7 +225,7 @@ else:
         "🔬 Pair Drill-Down",
     ])
 
-    # TAB 1: Warnings
+    # ══ TAB 1 ════════════════════════════════════════════════════════════════════
     with tab_warnings:
         st.subheader("⚠️ Plagiarism Warnings")
         st.caption(f"Pairs with similarity ≥ **{threshold:.2f}**")
@@ -260,9 +259,15 @@ else:
                             unsafe_allow_html=True,
                         )
 
-    # TAB 2: FAISS Search
+    # ══ TAB 2: FAISS ═════════════════════════════════════════════════════════════
     with tab_faiss:
         st.subheader("⚡ FAISS Vector Search — Chunk-Level Plagiarism")
+        st.markdown(
+            "FAISS searches **every chunk** against all other documents' chunks. "
+            "Uses exact search for small collections and **IVF approximate search** "
+            "for large ones — scaling to thousands of assignments."
+        )
+
         faiss_col1, faiss_col2 = st.columns([2, 1])
         with faiss_col1:
             faiss_threshold = st.slider("FAISS similarity threshold", 0.50, 0.99,
@@ -270,7 +275,8 @@ else:
         with faiss_col2:
             run_faiss = st.button("🔍 Run FAISS Search", type="primary", use_container_width=True)
 
-        st.info(f"📐 Index: **{faiss_index.ntotal} vectors** across **{n_docs} documents**.")
+        st.info(f"📐 Index: **{faiss_index.ntotal} vectors** across **{n_docs} documents** "
+                f"({total_chunks} chunks total).")
 
         if run_faiss:
             with st.spinner("Searching FAISS index across all chunks…"):
@@ -305,10 +311,22 @@ else:
                         with cb:
                             st.markdown(f"**📄 {match['match_doc']}**")
                             st.warning(match["match_chunk_text"])
+                        st.markdown(
+                            f"<div style='text-align:right;'>"
+                            f"<span style='background:{color};color:white;padding:3px 12px;"
+                            f"border-radius:10px;font-size:0.85rem;font-weight:700;'>"
+                            f"Similarity: {match['similarity']*100:.1f}%</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                if len(faiss_matches) > 20:
+                    st.caption(f"Showing top 20 of {len(faiss_matches)} matches.")
 
         st.divider()
         st.subheader("🔎 Query: Search Custom Text Against All Assignments")
-        query_text = st.text_area("Paste a text snippet:", height=120)
+        st.caption("Paste any text snippet — FAISS finds the most similar paragraphs across all uploads.")
+
+        query_text = st.text_area("Paste a text snippet:", height=120,
+                                  placeholder="Paste a paragraph from a suspected plagiarised source…")
         if st.button("🔍 Search Assignments", key="custom_query") and query_text.strip():
             from utils.embedding_model import embed_chunks
             with st.spinner("Embedding query and searching…"):
@@ -320,12 +338,17 @@ else:
             else:
                 st.success(f"Top {len(results)} matches:")
                 for rank, (record, score) in enumerate(results, 1):
-                    with st.expander(f"#{rank} — {record.doc_name} · {score:.1%}", expanded=(rank == 1)):
+                    with st.expander(
+                        f"#{rank} — {record.doc_name} (chunk #{record.chunk_index+1}) · {score:.1%}",
+                        expanded=(rank == 1)
+                    ):
                         cq, cm = st.columns(2)
-                        with cq: st.info(query_text.strip())
-                        with cm: st.warning(record.chunk_text)
+                        with cq:
+                            st.markdown("**Your query:**"); st.info(query_text.strip())
+                        with cm:
+                            st.markdown(f"**Match in {record.doc_name}:**"); st.warning(record.chunk_text)
 
-    # TAB 3: Matrix
+    # ══ TAB 3 ════════════════════════════════════════════════════════════════════
     with tab_matrix:
         st.subheader("📋 Similarity Matrix")
         def _highlight(val: Any) -> str:
@@ -335,28 +358,42 @@ else:
             return ""
         styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
         st.dataframe(styled_df, use_container_width=True)
+        st.download_button("⬇️ Download CSV", active_sim_df.to_csv().encode("utf-8"),
+                           "similarity_matrix.csv", "text/csv")
 
-    # TAB 4: Heatmap
+    # ══ TAB 4 ════════════════════════════════════════════════════════════════════
     with tab_heatmap:
         st.subheader("🗺️ Similarity Heatmap")
-        fig = plot_similarity_heatmap(active_sim_df, title="Document Semantic Similarity", threshold=threshold)
+        fig = plot_similarity_heatmap(active_sim_df, title="Document Semantic Similarity",
+                                      threshold=threshold)
         st.pyplot(fig, use_container_width=True)
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        buf.seek(0)
+        st.download_button("⬇️ Download PNG", buf, "heatmap.png", "image/png")
 
-    # TAB 5: Drill-down
+    # ══ TAB 5 ════════════════════════════════════════════════════════════════════
     with tab_drill:
         st.subheader("🔬 Pair Drill-Down")
+        st.caption("Inspect chunk-level similarity between any two documents.")
         if n_docs < 2:
             st.warning("Need at least 2 documents.")
         else:
             c1, c2 = st.columns(2)
             with c1: doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
-            with c2: doc_b = st.selectbox("Document B", [d for d in doc_names if d != doc_a], index=0, key="db")
+            with c2: doc_b = st.selectbox("Document B",
+                                           [d for d in doc_names if d != doc_a], index=0, key="db")
 
             score = float(active_sim_df.loc[doc_a, doc_b])
             score_color = "#ff4b4b" if score >= 0.9 else ("#ffa500" if score >= threshold else "#21c55d")
-            st.markdown(f"**Overall Similarity:** <span style='color:{score_color};font-size:1.2rem;font-weight:700;'>{score:.1%}</span>", unsafe_allow_html=True)
+            st.markdown(
+                f"**Overall Similarity:** "
+                f"<span style='color:{score_color};font-size:1.2rem;font-weight:700;'>"
+                f"{score:.1%}</span>", unsafe_allow_html=True,
+            )
             st.progress(float(score))
-            
+            st.divider()
+
             emb_a, emb_b     = embeddings.get(doc_a, np.array([])), embeddings.get(doc_b, np.array([]))
             chunks_a, chunks_b = chunked_docs.get(doc_a, []), chunked_docs.get(doc_b, [])
 
@@ -367,6 +404,27 @@ else:
                     cosine_similarity(emb_a, emb_b)[:max_d, :max_d],
                 )
                 st.pyplot(fig2, use_container_width=True)
+
+                top_pairs = find_most_similar_chunks(
+                    chunks_a, chunks_b, emb_a, emb_b, top_k=5, threshold=threshold)
+                if top_pairs:
+                    st.subheader("🔑 Top Suspicious Paragraph Pairs")
+                    for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
+                        with st.expander(f"#{rank} — Similarity: {sim:.1%}", expanded=(rank == 1)):
+                            col1, col2 = st.columns(2)
+                            with col1: st.markdown(f"**From {doc_a}**"); st.info(ca)
+                            with col2: st.markdown(f"**From {doc_b}**"); st.warning(cb)
+                else:
+                    st.success("No paragraph pairs above the threshold for this pair.")
+
+            with st.expander("📄 View Raw Extracted Text"):
+                t1, t2 = st.columns(2)
+                with t1:
+                    st.markdown(f"**{doc_a}**")
+                    st.text_area("", raw_texts.get(doc_a, "(empty)"), height=300, key="ta")
+                with t2:
+                    st.markdown(f"**{doc_b}**")
+                    st.text_area("", raw_texts.get(doc_b, "(empty)"), height=300, key="tb")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()

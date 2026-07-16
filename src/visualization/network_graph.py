@@ -146,8 +146,7 @@ def plot_similarity_network(
         text=[name.split(".")[0] for name in node_text],  # Short display name (no extension)
         textposition="top center",
         hoverinfo="text",
-        textfont=dict(color="#e6edf3", size=10, family="Arial Black"),
-        marker=dict(
+textfont=dict(color="#0F172A", size=10, family="Arial Black"),        marker=dict(
             showscale=False,
             color=node_color,
             size=node_size,
@@ -168,9 +167,9 @@ def plot_similarity_network(
             shapes=shapes,
             xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            paper_bgcolor="#0e1117",
-            plot_bgcolor="#0e1117",
-            font=dict(color="#e6edf3")
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
+            font=dict(color="#0F172A")
         )
     )
     

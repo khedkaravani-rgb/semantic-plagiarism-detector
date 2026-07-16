@@ -184,9 +184,9 @@ def plot_similarity_heatmap_plotly(
         annotations=annotations,
         shapes=shapes,
         margin=dict(l=140, r=60, t=70, b=140),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="#e6edf3"),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(color="#0F172A"),
     )
 
     return fig

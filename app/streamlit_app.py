@@ -19,6 +19,8 @@ from src.core.similarity import (
 )
 from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
 from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix
+from src.visualization.network_graph import plot_similarity_network
+from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks
 from src.core.webhook import send_plagiarism_alert
 from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks
 from src.core.document_parser import (
@@ -550,14 +552,57 @@ else:
 
     # ══ TAB 4 ════════════════════════════════════════════════════════════════════
     with tab_heatmap:
-        st.subheader("🗺️ Similarity Heatmap")
-        fig = plot_similarity_heatmap(active_sim_df, title="Document Semantic Similarity",
-                                      threshold=threshold)
-        st.pyplot(fig, use_container_width=True)
-        buf = _io.BytesIO()
-        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-        buf.seek(0)
-        st.download_button("⬇️ Download PNG", buf, "heatmap.png", "image/png")
+     st.subheader("🗺️ Similarity Heatmap")
+
+     heatmap_fig = plot_similarity_heatmap(
+        active_sim_df,
+        title="Document Semantic Similarity",
+        threshold=threshold,
+    )
+
+     st.pyplot(
+        heatmap_fig,
+        use_container_width=True,
+    )
+
+     buf = _io.BytesIO()
+     heatmap_fig.savefig(
+        buf,
+        format="png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+     buf.seek(0)
+
+     st.download_button(
+       "⬇️ Download Heatmap PNG",
+        buf,
+        "heatmap.png",
+        "image/png",
+    )
+
+     st.divider()
+
+     st.subheader("🕸️ Interactive Plagiarism Network")
+     st.caption(
+        "Documents are shown as nodes. Connections appear when "
+        "their similarity is greater than or equal to the selected threshold."
+    )
+
+     network_fig = plot_similarity_network(
+        similarity_df=active_sim_df,
+        threshold=threshold,
+        title="Interactive Document Plagiarism Network",
+    )
+
+     st.plotly_chart(
+        network_fig,
+        use_container_width=True,
+        config={
+            "displaylogo": False,
+            "scrollZoom": True,
+        },
+    )
 
     # ══ TAB 5 ════════════════════════════════════════════════════════════════════
     with tab_drill:

@@ -18,18 +18,28 @@ from src.core.similarity import (
     find_most_similar_chunks, PLAGIARISM_THRESHOLD,
 )
 from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
+from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix
 from src.visualization.network_graph import plot_similarity_network
 from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks
 from src.core.webhook import send_plagiarism_alert
+from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks
 from src.core.document_parser import (
     extract_text_from_pdf,
     prepare_text_for_embedding,
 )
+import hashlib
+
+# Initialize corpus database
+init_corpus_db()
+
+# FAISS index file path
+_INDEX_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "corpus.index"))
 from src.utils.pdf_report import generate_plagiarism_report
 from src.db.auth import init_db, verify_user, get_user_role, add_user, get_all_users, delete_user, update_password
 
 # Initialize database
 init_db()
+from src.db.auth import init_db, verify_user, get_user_role
 
 # Must be the first Streamlit command called
 st.set_page_config(
@@ -37,6 +47,7 @@ st.set_page_config(
     page_icon="🔍", layout="wide",
     initial_sidebar_state="expanded",
 )
+init_db()
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
@@ -52,7 +63,7 @@ if "last_interaction" in st.session_state and st.session_state.get("authenticate
     elapsed_time = time.time() - st.session_state.last_interaction
     if elapsed_time > TIMEOUT_LIMIT:
         # Clear sensitive session variables on timeout
-        for key in ["authenticated", "role", "last_interaction"]:
+        for key in ["authenticated", "username", "role", "last_interaction"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.warning("⏱️ Your session has expired due to 15 minutes of inactivity. Please log in again.")
@@ -80,8 +91,27 @@ if not st.session_state.get("authenticated", False):
                 st.session_state.last_interaction = time.time()
                 st.success(f"Welcome back, {role.capitalize()}!")
                 st.rerun()
+            username = username.strip().lower()
+
+            if not username or not password:
+                st.error("Please enter both username and password.")
+
+            elif verify_user(username, password):
+                role = get_user_role(username)
+
+                if role is None:
+                    st.error("Unable to determine the user role.")
+                else:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.role = role
+                    st.session_state.last_interaction = time.time()
+
+                    st.success(f"Welcome back, {username}!")
+                    st.rerun()
+
             else:
-                st.error("Invalid Username or Password.")
+                st.error("Invalid username or password.")
     st.stop()
 
 # Get secure role for this active interaction
@@ -122,9 +152,36 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Semantic Plagiarism Detector · FAISS edition")
     
+    # Document management (admin only)
+    if user_role == "admin":
+        st.markdown("### 📁 Document Management")
+        existing_docs = get_all_documents()
+        if existing_docs:
+            st.write(f"**{len(existing_docs)}** documents in database")
+            for doc in existing_docs:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text(f"📄 {doc['filename']}")
+                with col2:
+                    if st.button("🗑️", key=f"del_{doc['filename']}"):
+                        delete_document(doc['filename'])
+                        # Rebuild FAISS index from remaining embeddings
+                        embeddings_matrix = get_all_embeddings()
+                        if embeddings_matrix.size > 0:
+                            new_index = build_index_from_matrix(embeddings_matrix)
+                            save_index(new_index, _INDEX_PATH)
+                        else:
+                            # No embeddings left, remove the index file
+                            if os.path.exists(_INDEX_PATH):
+                                os.remove(_INDEX_PATH)
+                        st.rerun()
+        else:
+            st.info("No documents in database")
+        st.markdown("---")
+    
     # Log out button
     if st.button("🚪 Log Out", use_container_width=True):
-        for key in ["authenticated", "role", "last_interaction"]:
+        for key in ["authenticated", "username", "role", "last_interaction"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
@@ -221,17 +278,47 @@ if user_role != "admin":
                 st.info("Please ensure documents have been indexed by an administrator.")
 else:
     # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
+    
+    # Load or initialize FAISS index
+    if os.path.exists(_INDEX_PATH):
+        faiss_index = load_index(_INDEX_PATH)
+        registry = get_chunk_registry()
+        st.info(f"📂 Loaded existing FAISS index with {faiss_index.ntotal} vectors")
+    else:
+        faiss_index = None
+        registry = []
+    
     uploaded_files = st.file_uploader(
         "📂 Upload Assignment PDFs", type=["pdf"],
         accept_multiple_files=True, help="Upload 2 or more PDF files.",
     )
-    if not uploaded_files or len(uploaded_files) < 2:
+    
+    # Allow analysis with existing index even without new uploads
+    if not uploaded_files:
+        if faiss_index is None or faiss_index.ntotal == 0:
+            st.info("👆 Please upload **at least 2** PDF assignment files to begin.")
+            st.stop()
+        else:
+            st.success(f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents")
+            # Skip to analysis section with existing index
+            file_bytes_dict = {}
+            raw_texts = {}
+            chunked_docs = {}
+            embeddings = {}
+            sim_df = None
+            chunk_sim_df = None
+            # We'll need to handle this case differently for the analysis
+            st.warning("⚠️ Full similarity matrix requires re-uploading files. FAISS search is available with existing index.")
+            # For now, require uploads for full functionality
+            st.stop()
+    
+    if len(uploaded_files) < 2:
         st.info("👆 Please upload **at least 2** PDF assignment files to begin.")
         st.stop()
 
     # ── Pipeline (cached) ─────────────────────────────────────────────────────────
     @st.cache_data(show_spinner=False)
-    def run_pipeline(file_bytes_dict: dict):
+    def run_pipeline(file_bytes_dict: dict, existing_index=None, existing_registry=None):
       raw_texts = {
         name: extract_text_from_pdf(_io.BytesIO(data))
         for name, data in file_bytes_dict.items()
@@ -302,45 +389,130 @@ else:
         registry,
     )
 
-    file_bytes_dict = {f.name: f.read() for f in uploaded_files}
+    # Filter out already-uploaded files and process only new ones
+    new_files = {}
+    skipped_files = []
+    for f in uploaded_files:
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+        f.seek(0)  # Reset file pointer
+        existing = get_document_by_hash(file_hash)
+        if existing:
+            skipped_files.append(f.name)
+        else:
+            new_files[f.name] = f.read()
+            add_document(f.name, file_hash)
+    
+    if skipped_files:
+        st.info(f"⏭️ Skipped {len(skipped_files)} already-uploaded files: {', '.join(skipped_files)}")
+    
+    if not new_files:
+        st.warning("No new files to upload. All uploaded files are already in the database.")
+        if faiss_index is None:
+            st.stop()
+        # Continue with existing index for analysis
+    else:
+        st.info(f"📤 Processing {len(new_files)} new files...")
+        
+        # Process new files
+        with st.spinner("🧠 Processing new PDFs, building embeddings and FAISS index…"):
+            raw_texts_new, chunked_docs_new, embeddings_new, sim_df_new, chunk_sim_df_new, faiss_index_new, registry_new = \
+                run_pipeline(new_files)
+        
+        # If we have an existing index, merge the new data
+        if faiss_index is not None:
+            # Add new embeddings to existing index
+            all_vectors = []
+            all_registry = registry.copy()
+            
+            for doc_name, emb in embeddings_new.items():
+                chunks = chunked_docs_new.get(doc_name, [])
+                if emb.ndim != 2 or emb.shape[0] == 0:
+                    continue
+                for i, (vec, text) in enumerate(zip(emb, chunks)):
+                    all_vectors.append(vec.astype("float32"))
+                    all_registry.append(ChunkRecord(doc_name, i, text))
+            
+            if all_vectors:
+                matrix = np.vstack(all_vectors)
+                faiss_index.add(matrix)  # type: ignore[arg-type]
+                registry = all_registry
+                st.success(f"✅ Added {len(all_vectors)} new vectors to existing index")
+        else:
+            # No existing index, use the new one
+            faiss_index = faiss_index_new
+            registry = registry_new
+            raw_texts = raw_texts_new
+            chunked_docs = chunked_docs_new
+            embeddings = embeddings_new
+            sim_df = sim_df_new
+            chunk_sim_df = chunk_sim_df_new
+        
+        # Save the updated FAISS index to disk
+        save_index(faiss_index, _INDEX_PATH)
+        
+        # Store chunks in database for persistence
+        for doc_name, emb in embeddings_new.items():
+            chunks = chunked_docs_new.get(doc_name, [])
+            if emb.ndim != 2 or emb.shape[0] == 0:
+                continue
+            # Get the starting vector_id for this document
+            start_id = len([r for r in registry if r.doc_name != doc_name])
+            chunks_to_add = []
+            for i, (vec, text) in enumerate(zip(emb, chunks)):
+                chunks_to_add.append((start_id + i, doc_name, i, text, vec))
+            add_chunks(chunks_to_add)
+    
+    # If we have an existing index but no new files, load existing data
+    if faiss_index is not None and not new_files:
+        # For now, we need to rebuild the full pipeline for similarity matrix
+        # This is a limitation - we'd need to store raw_texts in DB to avoid this
+        st.warning("⚠️ Similarity matrix requires re-uploading files. FAISS search is available with existing index.")
+        # For full functionality, require uploads
+        if not new_files:
+            st.info("Please upload files to generate similarity matrix. FAISS search is available below.")
+            # We'll allow FAISS search but skip the matrix
+            raw_texts = {}
+            chunked_docs = {}
+            embeddings = {}
+            sim_df = None
+            chunk_sim_df = None
+            active_sim_df = None
+            flags = []
+    else:
+        # Check for empty PDFs (e.g. scanned images with no OCR)
+        empty_docs = [name for name, text in raw_texts.items() if not text.strip()]
+        if empty_docs:
+            st.warning(f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}. These might be scanned images or password-protected PDFs.")
 
-    with st.spinner("🧠 Processing PDFs, building embeddings and FAISS index…"):
-        raw_texts, chunked_docs, embeddings, sim_df, chunk_sim_df, faiss_index, registry = \
-            run_pipeline(file_bytes_dict)
-
-    # Check for empty PDFs (e.g. scanned images with no OCR)
-    empty_docs = [name for name, text in raw_texts.items() if not text.strip()]
-    if empty_docs:
-        st.warning(f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}. These might be scanned images or password-protected PDFs.")
-
-    active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
-    flags         = flag_plagiarism(active_sim_df, threshold=threshold)
+        active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
+        flags         = flag_plagiarism(active_sim_df, threshold=threshold)
 
     # ── Webhook notifications for high-similarity matches (>= 90%) ───────────────
     if "notified_pairs" not in st.session_state:
         st.session_state.notified_pairs = set()
-        
-    current_files = sorted(list(file_bytes_dict.keys()))
-    if "last_uploaded_files" not in st.session_state or st.session_state.last_uploaded_files != current_files:
-        st.session_state.last_uploaded_files = current_files
-        st.session_state.notified_pairs = set()
+    
+    if active_sim_df is not None:
+        current_files = sorted(list(file_bytes_dict.keys()))
+        if "last_uploaded_files" not in st.session_state or st.session_state.last_uploaded_files != current_files:
+            st.session_state.last_uploaded_files = current_files
+            st.session_state.notified_pairs = set()
 
-    for flag in flags:
-        if flag["similarity"] >= 0.90:
-            pair_key = tuple(sorted([flag["doc_a"], flag["doc_b"]]))
-            if pair_key not in st.session_state.notified_pairs:
-                send_plagiarism_alert(flag["doc_a"], flag["doc_b"], flag["similarity"])
-                st.session_state.notified_pairs.add(pair_key)
+        for flag in flags:
+            if flag["similarity"] >= 0.90:
+                pair_key = tuple(sorted([flag["doc_a"], flag["doc_b"]]))
+                if pair_key not in st.session_state.notified_pairs:
+                    send_plagiarism_alert(flag["doc_a"], flag["doc_b"], flag["similarity"])
+                    st.session_state.notified_pairs.add(pair_key)
 
     # ── Summary metrics ───────────────────────────────────────────────────────────
     st.subheader("📊 Analysis Summary")
     col1, col2, col3, col4, col5 = st.columns(5)
     doc_names    = list(raw_texts.keys())
     n_docs       = len(doc_names)
-    total_pairs  = n_docs * (n_docs - 1) // 2
+    total_pairs  = n_docs * (n_docs - 1) // 2 if n_docs > 1 else 0
     n_flagged    = len(flags)
     n_high       = sum(1 for f in flags if "High" in f["severity"])
-    avg_sim      = active_sim_df.values[np.triu_indices(n_docs, k=1)].mean() if n_docs > 1 else 0.0
+    avg_sim      = active_sim_df.values[np.triu_indices(n_docs, k=1)].mean() if active_sim_df is not None and n_docs > 1 else 0.0
     total_chunks = sum(len(v) for v in chunked_docs.values())
 
     col1.metric("📄 Documents",   n_docs)

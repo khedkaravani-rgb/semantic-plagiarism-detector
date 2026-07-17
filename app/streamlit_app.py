@@ -8,6 +8,11 @@ import time
 import numpy as np
 import pandas as pd
 import streamlit as st
+from app.theme import (
+    get_theme_name,
+    inject_css,
+    set_theme,
+)
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Any
 from utils.warning_list import render_warning_controls
@@ -24,6 +29,7 @@ from src.core.faiss_index import build_index, find_plagiarised_chunks, search_si
 from src.core.webhook import send_plagiarism_alert
 from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks, get_unique_class_sections, get_documents_by_class
 from src.core.document_parser import (
+    OCRDependencyError,
     extract_text_from_pdf,
     prepare_text_for_embedding,
 )
@@ -35,6 +41,10 @@ init_corpus_db()
 # FAISS index file path
 _INDEX_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "corpus.index"))
 from src.utils.pdf_report import generate_plagiarism_report
+from src.db.auth import init_db, verify_user, get_user_role, add_user, get_all_users, delete_user, update_password
+
+# Initialize database
+init_db()
 from src.db.auth import init_db, verify_user, get_user_role
 
 # Must be the first Streamlit command called
@@ -43,6 +53,7 @@ st.set_page_config(
     page_icon="🔍", layout="wide",
     initial_sidebar_state="expanded",
 )
+inject_css()
 init_db()
 st.markdown("""
 <style>
@@ -79,6 +90,14 @@ if not st.session_state.get("authenticated", False):
         login_submitted = st.form_submit_button("Log In", use_container_width=True)
         
         if login_submitted:
+            if verify_user(username, password):
+                role = get_user_role(username)
+                st.session_state.authenticated = True
+                st.session_state.role = role
+                st.session_state.username = username
+                st.session_state.last_interaction = time.time()
+                st.success(f"Welcome back, {role.capitalize()}!")
+                st.rerun()
             username = username.strip().lower()
 
             if not username or not password:
@@ -109,6 +128,19 @@ user_role = st.session_state.get("role", "user")
 with st.sidebar:
     st.markdown("<div style='font-size: 72px; line-height: 1;'>🕵️‍♂️</div>", unsafe_allow_html=True)
     st.title("⚙️ Settings")
+    
+    current_theme = get_theme_name()
+
+    selected_theme = st.radio(
+    "Theme",
+    options=["Light", "Dark"],
+    index=0 if current_theme == "Light" else 1,
+    horizontal=True,
+    key="theme_selector",
+)
+    if selected_theme != current_theme:
+      set_theme(selected_theme)
+      st.rerun()
     st.write(f"Logged in as: **{user_role.upper()}**")
 
     # Only show administrative settings to ADMIN users
@@ -350,136 +382,267 @@ else:
                 "assignment_title": assignment_title.strip()
             }
 
-    # ── Pipeline (cached) ─────────────────────────────────────────────────────────
-    @st.cache_data(show_spinner=False)
-    def run_pipeline(file_bytes_dict: dict, existing_index=None, existing_registry=None):
-      raw_texts = {
-        name: extract_text_from_pdf(_io.BytesIO(data))
-        for name, data in file_bytes_dict.items()
-    }
+    # ── OCR failure UI ─────────────────────────────────────────────────────────────
+    class OCRFileBatchError(OCRDependencyError):
+        """OCR dependency failure containing the names of affected PDF files."""
 
-    # Original chunks are preserved for UI display.
-      chunked_docs = chunk_documents(raw_texts)
+        def __init__(
+            self,
+            failed_files: list[str],
+            details: list[str],
+        ) -> None:
+            self.failed_files = failed_files
+            self.details = details
+            super().__init__("; ".join(details))
 
-    # Translated English chunks are used only for embeddings.
-      translated_chunked_docs = {}
 
-      for doc_name, chunks in chunked_docs.items():
-        translated_chunked_docs[doc_name] = []
+    def show_ocr_dependency_error(
+        failed_files: list[str],
+        error_message: str,
+    ) -> None:
+        """Render a user-friendly OCR dependency and installation guide."""
+        st.error("⚠️ OCR could not process one or more scanned PDF files.")
 
-        for chunk in chunks:
-            prepared = prepare_text_for_embedding(chunk)
-
-            translated_chunked_docs[doc_name].append(
-                prepared["embedding_text"]
+        with st.expander("View OCR setup instructions", expanded=True):
+            st.markdown(
+                """
+                The affected PDF files appear to contain scanned or image-based
+                pages. These pages require **Tesseract OCR**, but Tesseract or
+                one of the required Python OCR packages is unavailable.
+                """
             )
 
-    # Generate embeddings from translated English text.
-      embeddings = embed_documents(translated_chunked_docs)
+            st.markdown("#### Files that could not be processed")
+            for filename in failed_files:
+                st.markdown(f"- `{filename}`")
 
-      sim_df = document_similarity_matrix(embeddings)
+            st.markdown("#### Install Tesseract OCR")
+            st.markdown(
+                """
+                **Windows**
 
-      names = list(embeddings.keys())
-      n = len(names)
-      chunk_mat = np.zeros((n, n))
+                1. Install Tesseract OCR.
+                2. Add the Tesseract installation directory to your system
+                   `PATH`.
+                3. Alternatively, set `TESSERACT_CMD` to the full path of
+                   `tesseract.exe`.
 
-      for i, na in enumerate(names):
-        for j, nb in enumerate(names):
-            if i == j:
-                chunk_mat[i, j] = 1.0
-            elif j > i:
-                ea = embeddings[na]
-                eb = embeddings[nb]
+                **macOS**
 
-                score = (
-                    float(np.max(cosine_similarity(ea, eb)))
-                    if ea.size and eb.size
-                    else 0.0
+                ```bash
+                brew install tesseract
+                ```
+
+                **Ubuntu/Debian Linux**
+
+                ```bash
+                sudo apt update
+                sudo apt install tesseract-ocr
+                ```
+
+                **Required Python packages**
+
+                ```bash
+                python -m pip install pytesseract pymupdf pillow
+                ```
+
+                Restart the Streamlit application after installation.
+                """
+            )
+
+            st.markdown("### Technical details")
+            st.code(error_message)
+
+
+    # ── Pipeline (cached) ─────────────────────────────────────────────────────────
+    @st.cache_data(show_spinner=False)
+    def run_pipeline(
+        file_bytes_dict: dict[str, bytes],
+        existing_index=None,
+        existing_registry=None,
+    ):
+        """Extract, chunk, embed and index uploaded PDF files."""
+        raw_texts = {}
+        failed_files = []
+        failure_details = []
+
+        # Process every PDF so the warning can list all affected files.
+        for name, data in file_bytes_dict.items():
+            try:
+                raw_texts[name] = extract_text_from_pdf(_io.BytesIO(data))
+            except OCRDependencyError as exc:
+                failed_files.append(name)
+                failure_details.append(f"{name}: {exc}")
+
+        if failed_files:
+            raise OCRFileBatchError(failed_files, failure_details)
+
+        # Original chunks are preserved for UI display.
+        chunked_docs = chunk_documents(raw_texts)
+
+        # Translated English chunks are used only for embeddings.
+        translated_chunked_docs = {}
+
+        for doc_name, chunks in chunked_docs.items():
+            translated_chunked_docs[doc_name] = []
+
+            for chunk in chunks:
+                prepared = prepare_text_for_embedding(chunk)
+                translated_chunked_docs[doc_name].append(
+                    prepared["embedding_text"]
                 )
 
-                chunk_mat[i, j] = score
-                chunk_mat[j, i] = score
+        # Generate embeddings from translated English text.
+        embeddings = embed_documents(translated_chunked_docs)
+        sim_df = document_similarity_matrix(embeddings)
 
-      chunk_sim_df = pd.DataFrame(
-        chunk_mat,
-        index=names,
-        columns=names,
-    )
+        names = list(embeddings.keys())
+        n = len(names)
+        chunk_mat = np.zeros((n, n))
 
-    # Store original chunks in the FAISS registry for UI display,
-    # while the vectors themselves come from translated English text.
-      faiss_index, registry = build_index(
-        embeddings,
-        chunked_docs,
-    )
+        for i, na in enumerate(names):
+            for j, nb in enumerate(names):
+                if i == j:
+                    chunk_mat[i, j] = 1.0
+                elif j > i:
+                    ea = embeddings[na]
+                    eb = embeddings[nb]
 
-      return (
-        raw_texts,
-        chunked_docs,
-        embeddings,
-        sim_df,
-        chunk_sim_df,
-        faiss_index,
-        registry,
-    )
+                    score = (
+                        float(np.max(cosine_similarity(ea, eb)))
+                        if ea.size and eb.size
+                        else 0.0
+                    )
 
-    # Filter out already-uploaded files and process only new ones
+                    chunk_mat[i, j] = score
+                    chunk_mat[j, i] = score
+
+        chunk_sim_df = pd.DataFrame(
+            chunk_mat,
+            index=names,
+            columns=names,
+        )
+
+        # Original chunks remain in the registry, while vectors are generated
+        # from translated English text.
+        faiss_index, registry = build_index(
+            embeddings,
+            chunked_docs,
+        )
+
+        return (
+            raw_texts,
+            chunked_docs,
+            embeddings,
+            sim_df,
+            chunk_sim_df,
+            faiss_index,
+            registry,
+        )
+
+
+    # Filter already-uploaded files, but do not save new files to the database
+    # until PDF extraction and the complete pipeline succeed.
     new_files = {}
     skipped_files = []
-    for f in uploaded_files:
-        file_hash = hashlib.sha256(f.read()).hexdigest()
-        f.seek(0)  # Reset file pointer
+
+    for uploaded_file in uploaded_files:
+        file_data = uploaded_file.getvalue()
+        file_hash = hashlib.sha256(file_data).hexdigest()
         existing = get_document_by_hash(file_hash)
+
         if existing:
-            skipped_files.append(f.name)
+            skipped_files.append(uploaded_file.name)
         else:
-            new_files[f.name] = f.read()
-            meta = metadata_dict.get(f.name, {"student_name": "", "class_section": "", "assignment_title": ""})
+            new_files[uploaded_file.name] = {
+                "data": file_data,
+                "hash": file_hash,
+            }
+    if skipped_files:
+        st.info(
+            f"⏭️ Skipped {len(skipped_files)} already-uploaded files: "
+            f"{', '.join(skipped_files)}"
+        )
+
+    if not new_files:
+        st.warning(
+            "No new files to upload. All uploaded files are already "
+            "in the database."
+        )
+        if faiss_index is None:
+            st.stop()
+        # Continue with the existing index for analysis.
+    else:
+        st.info(f"📤 Processing {len(new_files)} new files...")
+
+        pipeline_files = {
+            name: file_info["data"]
+            for name, file_info in new_files.items()
+        }
+
+        try:
+            with st.spinner(
+                "🧠 Processing new PDFs, building embeddings and FAISS index…"
+            ):
+                (
+                    raw_texts_new,
+                    chunked_docs_new,
+                    embeddings_new,
+                    sim_df_new,
+                    chunk_sim_df_new,
+                    faiss_index_new,
+                    registry_new,
+                ) = run_pipeline(pipeline_files)
+
+        except OCRDependencyError as exc:
+            failed_files = getattr(
+                exc,
+                "failed_files",
+                list(pipeline_files.keys()),
+            )
+
+            show_ocr_dependency_error(
+                failed_files=failed_files,
+                error_message=str(exc),
+            )
+            st.stop()
+
+        # The complete pipeline succeeded, so the documents can now be stored.
+        for doc_name, file_info in new_files.items():
+            meta = metadata_dict.get(doc_name, {"student_name": "", "class_section": "", "assignment_title": ""})
             add_document(
-                f.name,
-                file_hash,
+                doc_name,
+                file_info["hash"],
                 class_section=meta["class_section"],
                 student_name=meta["student_name"],
                 assignment_title=meta["assignment_title"]
             )
-    
-    if skipped_files:
-        st.info(f"⏭️ Skipped {len(skipped_files)} already-uploaded files: {', '.join(skipped_files)}")
-    
-    if not new_files:
-        st.warning("No new files to upload. All uploaded files are already in the database.")
-        if faiss_index is None:
-            st.stop()
-        # Continue with existing index for analysis
-    else:
-        st.info(f"📤 Processing {len(new_files)} new files...")
-        
-        # Process new files
-        with st.spinner("🧠 Processing new PDFs, building embeddings and FAISS index…"):
-            raw_texts_new, chunked_docs_new, embeddings_new, sim_df_new, chunk_sim_df_new, faiss_index_new, registry_new = \
-                run_pipeline(new_files)
-        
-        # If we have an existing index, merge the new data
+
+        # If an index already exists, append the new vectors.
         if faiss_index is not None:
-            # Add new embeddings to existing index
             all_vectors = []
             all_registry = registry.copy()
-            
+
             for doc_name, emb in embeddings_new.items():
                 chunks = chunked_docs_new.get(doc_name, [])
                 if emb.ndim != 2 or emb.shape[0] == 0:
                     continue
-                for i, (vec, text) in enumerate(zip(emb, chunks)):
+
+                for i, (vec, chunk_text) in enumerate(zip(emb, chunks)):
                     all_vectors.append(vec.astype("float32"))
-                    all_registry.append(ChunkRecord(doc_name, i, text))
-            
+                    all_registry.append(
+                        ChunkRecord(doc_name, i, chunk_text)
+                    )
+
             if all_vectors:
                 matrix = np.vstack(all_vectors)
                 faiss_index.add(matrix)  # type: ignore[arg-type]
                 registry = all_registry
-                st.success(f"✅ Added {len(all_vectors)} new vectors to existing index")
+                st.success(
+                    f"✅ Added {len(all_vectors)} new vectors to existing index"
+                )
         else:
-            # No existing index, use the new one
+            # No existing index: use the newly generated data.
             faiss_index = faiss_index_new
             registry = registry_new
             raw_texts = raw_texts_new
@@ -487,22 +650,27 @@ else:
             embeddings = embeddings_new
             sim_df = sim_df_new
             chunk_sim_df = chunk_sim_df_new
-        
-        # Save the updated FAISS index to disk
+
+        # Save the updated FAISS index.
         save_index(faiss_index, _INDEX_PATH)
-        
-        # Store chunks in database for persistence
+
+        # Store chunks in the database for persistence.
         for doc_name, emb in embeddings_new.items():
             chunks = chunked_docs_new.get(doc_name, [])
             if emb.ndim != 2 or emb.shape[0] == 0:
                 continue
-            # Get the starting vector_id for this document
-            start_id = len([r for r in registry if r.doc_name != doc_name])
+
+            start_id = len(
+                [record for record in registry if record.doc_name != doc_name]
+            )
             chunks_to_add = []
-            for i, (vec, text) in enumerate(zip(emb, chunks)):
-                chunks_to_add.append((start_id + i, doc_name, i, text, vec))
+
+            for i, (vec, chunk_text) in enumerate(zip(emb, chunks)):
+                chunks_to_add.append(
+                    (start_id + i, doc_name, i, chunk_text, vec)
+                )
+
             add_chunks(chunks_to_add)
-    
     # If we have an existing index but no new files, load existing data
     if faiss_index is not None and not new_files:
         # For now, we need to rebuild the full pipeline for similarity matrix
@@ -553,7 +721,7 @@ else:
         st.session_state.notified_pairs = set()
     
     if active_sim_df is not None:
-        current_files = sorted(list(file_bytes_dict.keys()))
+        current_files = sorted(list(new_files.keys()))
         if "last_uploaded_files" not in st.session_state or st.session_state.last_uploaded_files != current_files:
             st.session_state.last_uploaded_files = current_files
             st.session_state.notified_pairs = set()
@@ -585,12 +753,13 @@ else:
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill = st.tabs([
+    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs([
         "⚠️ Plagiarism Warnings",
         "⚡ FAISS Chunk Search",
         "📋 Similarity Matrix",
         "🗺️ Heatmap",
         "🔬 Pair Drill-Down",
+        "👥 User Management",
     ])
 
     # ══ TAB 1 ════════════════════════════════════════════════════════════════════
@@ -844,6 +1013,91 @@ else:
                 with t2:
                     st.markdown(f"**{doc_b}**")
                     st.text_area("", raw_texts.get(doc_b, "(empty)"), height=300, key="tb")
+
+    # ══ TAB 6: User Management ═══════════════════════════════════════════════════
+    with tab_users:
+        st.subheader("👥 User Management")
+        st.caption("Manage user accounts and roles. Only administrators can access this panel.")
+        
+        current_username = st.session_state.get("username", "")
+        
+        # Display existing users
+        users = get_all_users()
+        if users:
+            users_df = pd.DataFrame(users)
+            st.dataframe(users_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No users found in database.")
+        
+        st.divider()
+        
+        # Add new user form
+        st.subheader("Add New User")
+        with st.form("add_user_form"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_username = st.text_input("Username")
+            with col2:
+                new_password = st.text_input("Password", type="password")
+            with col3:
+                new_role = st.selectbox("Role", ["teacher", "student", "admin"])
+            
+            add_user_submitted = st.form_submit_button("Add User", type="primary")
+            
+            if add_user_submitted:
+                if new_username and new_password:
+                    try:
+                        add_user(new_username, new_password, new_role)
+                        st.success(f"User '{new_username}' added successfully with role '{new_role}'.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error adding user: {str(e)}")
+                else:
+                    st.error("Username and password are required.")
+        
+        st.divider()
+        
+        # Delete user form
+        st.subheader("Delete User")
+        with st.form("delete_user_form"):
+            if users:
+                user_to_delete = st.selectbox("Select user to delete", [u["username"] for u in users if u["username"] != current_username])
+                delete_user_submitted = st.form_submit_button("Delete User", type="secondary")
+                
+                if delete_user_submitted:
+                    if user_to_delete == current_username:
+                        st.error("You cannot delete your own account.")
+                    else:
+                        try:
+                            delete_user(user_to_delete)
+                            st.success(f"User '{user_to_delete}' deleted successfully.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting user: {str(e)}")
+            else:
+                st.info("No users available to delete.")
+        
+        st.divider()
+        
+        # Reset password form
+        st.subheader("Reset Password")
+        with st.form("reset_password_form"):
+            if users:
+                user_to_reset = st.selectbox("Select user", [u["username"] for u in users])
+                new_password_reset = st.text_input("New Password", type="password")
+                reset_password_submitted = st.form_submit_button("Reset Password", type="secondary")
+                
+                if reset_password_submitted:
+                    if new_password_reset:
+                        try:
+                            update_password(user_to_reset, new_password_reset)
+                            st.success(f"Password for '{user_to_reset}' reset successfully.")
+                        except Exception as e:
+                            st.error(f"Error resetting password: {str(e)}")
+                    else:
+                        st.error("New password is required.")
+            else:
+                st.info("No users available.")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()

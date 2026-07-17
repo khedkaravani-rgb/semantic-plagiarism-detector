@@ -23,9 +23,8 @@ from src.core.similarity import (
     find_most_similar_chunks, PLAGIARISM_THRESHOLD,
 )
 from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
-from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix
+from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix, ChunkRecord
 from src.visualization.network_graph import plot_similarity_network
-from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks
 from src.core.webhook import send_plagiarism_alert
 from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks, get_unique_class_sections, get_documents_by_class
 from src.core.document_parser import (
@@ -466,13 +465,12 @@ else:
         failed_files = []
         failure_details = []
 
-        # Process every PDF so the warning can list all affected files.
-        for name, data in file_bytes_dict.items():
-            try:
-                raw_texts[name] = extract_text_from_pdf(_io.BytesIO(data))
-            except OCRDependencyError as exc:
-                failed_files.append(name)
-                failure_details.append(f"{name}: {exc}")
+        # Process PDFs in parallel.
+        from src.core.document_parser import extract_texts_parallel
+        raw_texts, errors = extract_texts_parallel(file_bytes_dict)
+        for name, exc in errors.items():
+            failed_files.append(name)
+            failure_details.append(f"{name}: {exc}")
 
         if failed_files:
             raise OCRFileBatchError(failed_files, failure_details)
@@ -641,6 +639,11 @@ else:
                 st.success(
                     f"✅ Added {len(all_vectors)} new vectors to existing index"
                 )
+            raw_texts = raw_texts_new
+            chunked_docs = chunked_docs_new
+            embeddings = embeddings_new
+            sim_df = sim_df_new
+            chunk_sim_df = chunk_sim_df_new
         else:
             # No existing index: use the newly generated data.
             faiss_index = faiss_index_new

@@ -15,9 +15,14 @@ from src.core.document_parser import (
 def _make_pdf_bytes(text: str) -> bytes:
     """Create a minimal in-memory PDF containing the given text."""
     writer = pypdf.PdfWriter()
-    page = writer.add_blank_page(width=200, height=200)
+    from reportlab.pdfgen import canvas
     buf = io.BytesIO()
-    writer.write(buf)
+    c = canvas.Canvas(buf)
+    # Ensure there are enough words to bypass OCR fallback (at least 8 words)
+    words = (text + " word" * 10).split()
+    c.drawString(50, 150, " ".join(words))
+    c.showPage()
+    c.save()
     return buf.getvalue()
 
 
@@ -39,9 +44,9 @@ def test_extract_from_pdf_bytes():
 
 def test_extract_from_pdf_filters_repeated_headers_page_numbers_and_whitespace():
     page_one = MagicMock()
-    page_one.extract_text.return_value = "Research Report\n\nIntroduction\nPage 1"
+    page_one.extract_text.return_value = "Research Report\n\nIntroduction\nPage 1\nThis page contains enough embedded words for normal PDF extraction."
     page_two = MagicMock()
-    page_two.extract_text.return_value = "Research Report\n\nBody content\nPage 2"
+    page_two.extract_text.return_value = "Research Report\n\nBody content\nPage 2\nThis page contains enough embedded words for normal PDF extraction."
 
     fake_pdf = MagicMock()
     fake_pdf.pages = [page_one, page_two]
@@ -96,7 +101,7 @@ def test_extract_texts_mixed():
     mock_file2.read.return_value = txt_bytes
 
     # Mock extract_text to isolate testing of extract_texts structure
-    with patch("src.core.document_parser.extract_text", side_effect=lambda f, name: f"Parsed {name}"):
+    with patch("src.core.document_parser.extract_text", side_effect=lambda f, name, **kwargs: f"Parsed {name}"):
         results = extract_texts([mock_file1, mock_file2])
 
     assert results["doc1.docx"] == "Parsed doc1.docx"

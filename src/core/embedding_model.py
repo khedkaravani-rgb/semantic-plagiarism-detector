@@ -76,12 +76,34 @@ def embed_documents(chunked_docs: dict, batch_size: int = 64) -> dict:
         Dict mapping document name → numpy array of embeddings (shape: N×384).
     """
     embeddings = {}
+    all_chunks = []
+    doc_chunk_counts = []
+    doc_names = []
+
+    # Initialize all documents with empty arrays
+    for doc_name in chunked_docs.keys():
+        embeddings[doc_name] = np.array([])
+
     for doc_name, chunks in chunked_docs.items():
         if not chunks:
             print(f"[embedding_model] Warning: '{doc_name}' has no chunks. Skipping.")
-            embeddings[doc_name] = np.array([])
             continue
-        embeddings[doc_name] = embed_chunks(chunks, batch_size=batch_size)
+        all_chunks.extend(chunks)
+        doc_chunk_counts.append(len(chunks))
+        doc_names.append(doc_name)
+
+    if not all_chunks:
+        return embeddings
+
+    # Call embed_chunks once for the entire batch of chunks across all documents
+    all_embeddings = embed_chunks(all_chunks, batch_size=batch_size)
+
+    # Map the embeddings back to the original documents
+    start_idx = 0
+    for doc_name, count in zip(doc_names, doc_chunk_counts):
+        end_idx = start_idx + count
+        embeddings[doc_name] = all_embeddings[start_idx:end_idx]
+        start_idx = end_idx
 
     return embeddings
 

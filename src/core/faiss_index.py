@@ -140,7 +140,7 @@ def search_similar_chunks(
 
     results = []
     for score, idx in zip(scores[0], indices[0]):
-        if idx < 0:
+        if idx < 0 or idx >= len(registry):
             continue
         record = registry[idx]
         if exclude_doc and record.doc_name == exclude_doc:
@@ -210,13 +210,13 @@ def find_plagiarised_chunks(
 def save_index(index: faiss.Index, path: str) -> None:
     """Persist a FAISS index to disk."""
     faiss.write_index(index, path)
-    print(f"[faiss_index] Index saved → {path}  ({index.ntotal} vectors)")
+    print(f"[faiss_index] Index saved to {path}  ({index.ntotal} vectors)")
 
 
 def load_index(path: str) -> faiss.Index:
     """Load a FAISS index from disk."""
     index = faiss.read_index(path)
-    print(f"[faiss_index] Index loaded ← {path}  ({index.ntotal} vectors)")
+    print(f"[faiss_index] Index loaded from {path}  ({index.ntotal} vectors)")
     return index
 
 

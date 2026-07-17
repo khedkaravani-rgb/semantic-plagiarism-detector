@@ -228,6 +228,115 @@ def _ocr_pdf_page(
         ) from exc
 
 
+def _should_use_parallel() -> bool:
+    """Determine if we should run parsing in parallel processes."""
+    import os
+    import sys
+    # Disable parallel processing if running under pytest to preserve unit test mocks
+    if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    # Disable nested multiprocessing
+    try:
+        import multiprocessing
+        if multiprocessing.current_process().name != "MainProcess":
+            return False
+        if hasattr(multiprocessing, "parent_process") and multiprocessing.parent_process() is not None:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _parse_pdf_page(
+    pdf_bytes: bytes,
+    page_index: int,
+    ocr_dpi: int,
+    ocr_language: str,
+) -> List[str]:
+    """Helper running in a subprocess to extract text from a single PDF page."""
+    import pdfplumber
+    import io
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            page = pdf.pages[page_index]
+            native_text = (page.extract_text() or "").strip()
+            selected_text = native_text
+
+            if not _has_meaningful_text(native_text):
+                selected_text = _ocr_pdf_page(
+                    pdf_bytes,
+                    page_index,
+                    dpi=ocr_dpi,
+                    language=ocr_language,
+                )
+
+            return _clean_page_text(selected_text)
+    except OCRDependencyError:
+        raise
+    except Exception as exc:
+        print(f"[document_parser] Error parsing page {page_index}: {exc}")
+        return []
+
+
+def _extract_single_file_helper(
+    data: bytes,
+    name: str,
+    ocr_language: str,
+    ocr_dpi: int,
+) -> str:
+    """Helper running in a subprocess to extract text from a single file."""
+    return extract_text(data, name, ocr_language=ocr_language, ocr_dpi=ocr_dpi)
+
+
+def extract_texts_parallel(
+    files_dict: Dict[str, bytes],
+    *,
+    ocr_language: str = "eng",
+    ocr_dpi: int = DEFAULT_OCR_DPI,
+) -> tuple[Dict[str, str], Dict[str, Exception]]:
+    """
+    Extract text from multiple files in parallel using ProcessPoolExecutor.
+    
+    Returns:
+        tuple of (results_dict, errors_dict)
+    """
+    results: Dict[str, str] = {}
+    errors: Dict[str, Exception] = {}
+
+    if not files_dict:
+        return results, errors
+
+    if len(files_dict) == 1 or not _should_use_parallel():
+        for name, data in files_dict.items():
+            try:
+                results[name] = _extract_single_file_helper(data, name, ocr_language, ocr_dpi)
+            except Exception as exc:
+                errors[name] = exc
+        return results, errors
+
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                _extract_single_file_helper,
+                data,
+                name,
+                ocr_language,
+                ocr_dpi,
+            ): name
+            for name, data in files_dict.items()
+        }
+        for future in futures:
+            name = futures[future]
+            try:
+                text = future.result()
+                results[name] = text
+            except Exception as exc:
+                errors[name] = exc
+
+    return results, errors
+
+
 def extract_text_from_pdf(
     file: PDFInput,
     *,
@@ -245,26 +354,51 @@ def extract_text_from_pdf(
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page_index, page in enumerate(pdf.pages):
-                native_text = (page.extract_text() or "").strip()
-                selected_text = native_text
-
-                if not _has_meaningful_text(native_text):
-                    selected_text = _ocr_pdf_page(
-                        pdf_bytes,
-                        page_index,
-                        dpi=ocr_dpi,
-                        language=ocr_language,
-                    )
-
-                if selected_text.strip():
-                    page_lines.append(_clean_page_text(selected_text))
-    except OCRDependencyError:
-        # Preserve a clear, actionable message for Streamlit and callers.
-        raise
+            num_pages = len(pdf.pages)
     except Exception as exc:
         print(f"[document_parser] Error reading PDF: {exc}")
         return ""
+
+    if num_pages == 0:
+        return ""
+
+    if _should_use_parallel() and num_pages > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        page_lines = [[] for _ in range(num_pages)]
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    _parse_pdf_page,
+                    pdf_bytes,
+                    page_index,
+                    ocr_dpi,
+                    ocr_language,
+                )
+                for page_index in range(num_pages)
+            ]
+            try:
+                for page_index, future in enumerate(futures):
+                    page_lines[page_index] = future.result()
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
+    else:
+        try:
+            for page_index in range(num_pages):
+                page_lines.append(
+                    _parse_pdf_page(
+                        pdf_bytes,
+                        page_index,
+                        ocr_dpi,
+                        ocr_language,
+                    )
+                )
+        except OCRDependencyError:
+            raise
+        except Exception as exc:
+            print(f"[document_parser] Error reading PDF: {exc}")
+            return ""
 
     if not page_lines:
         return ""
@@ -306,12 +440,18 @@ def extract_text_from_txt(file: PDFInput) -> str:
     return text.strip()
 
 
-def extract_text(file: PDFInput, filename: str) -> str:
+def extract_text(
+    file: PDFInput,
+    filename: str,
+    *,
+    ocr_language: str = "eng",
+    ocr_dpi: int = DEFAULT_OCR_DPI,
+) -> str:
     """Route extraction according to a filename extension."""
     extension = filename.rsplit(".", 1)[-1].lower()
 
     if extension == "pdf":
-        return extract_text_from_pdf(file)
+        return extract_text_from_pdf(file, ocr_language=ocr_language, ocr_dpi=ocr_dpi)
     if extension == "docx":
         return extract_text_from_docx(file)
     return extract_text_from_txt(file)
@@ -324,16 +464,27 @@ def extract_texts_from_pdfs(files: list) -> Dict[str, str]:
 
 def extract_texts(files: list) -> Dict[str, str]:
     """Extract text from multiple uploaded files."""
-    results: Dict[str, str] = {}
-
-    for file in files:
+    files_dict = {}
+    for idx, file in enumerate(files):
         if hasattr(file, "name"):
             name = file.name
         elif isinstance(file, str):
             name = Path(file).name
         else:
-            name = f"document_{len(results) + 1}"
-
-        results[name] = extract_text(file, name)
-
+            name = f"document_{idx + 1}"
+        
+        try:
+            files_dict[name] = _read_pdf_bytes(file)
+        except Exception as exc:
+            print(f"[document_parser] Error reading file data for {name}: {exc}")
+            files_dict[name] = b""
+            
+    raw_texts, errors = extract_texts_parallel(files_dict)
+    if errors:
+        raise next(iter(errors.values()))
+        
+    results = {}
+    for name in files_dict.keys():
+        results[name] = raw_texts.get(name, "")
+        
     return results

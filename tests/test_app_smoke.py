@@ -31,6 +31,26 @@ def mock_embed_chunks(chunks, batch_size=64):
     val = 1.0 / (384 ** 0.5)
     return np.full((len(chunks), 384), val, dtype="float32")
 
+@pytest.fixture(autouse=True)
+def clean_smoke_test_env():
+    import os
+    from src.db.corpus_db import clear_all_data
+    clear_all_data()
+    index_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "corpus.index"))
+    if os.path.exists(index_path):
+        try:
+            os.remove(index_path)
+        except Exception:
+            pass
+    yield
+    clear_all_data()
+    if os.path.exists(index_path):
+        try:
+            os.remove(index_path)
+        except Exception:
+            pass
+
+
 @patch("src.core.webhook.send_plagiarism_alert")
 @patch("src.core.embedding_model.embed_chunks", side_effect=mock_embed_chunks)
 def test_app_smoke(mock_embed, mock_webhook):
@@ -50,14 +70,16 @@ def test_app_smoke(mock_embed, mock_webhook):
     assert len(at.file_uploader) > 0
     
     # Generate 2 PDFs with text > 20 words to trigger plagiarism warnings
+    import uuid
     sample_text = (
         "Artificial intelligence is intelligence demonstrated by machines, as opposed to natural "
         "intelligence displayed by humans and other animals. This field of computer science is "
         "highly focused on study, research and development of agents that perceive their environment "
         "and take actions that maximize their chance of successfully achieving their goals."
     )
-    pdf1 = generate_pdf(sample_text)
-    pdf2 = generate_pdf(sample_text)
+    unique_suffix = f" Run identifier: {uuid.uuid4()}"
+    pdf1 = generate_pdf(sample_text + unique_suffix + " doc1")
+    pdf2 = generate_pdf(sample_text + unique_suffix + " doc2")
     
     # Upload via the native AppTest FileUploader.upload method
     at.file_uploader[0].upload("doc1.pdf", pdf1, "application/pdf")
@@ -72,6 +94,14 @@ def test_app_smoke(mock_embed, mock_webhook):
     # Check if metrics are rendered correctly (should be 5 summary metrics)
     assert len(at.metric) >= 5
     
+    # Verify warnings are present and severity badge is correct (🔴 High since similarity = 100%)
+    badge_found = False
+    for md in at.markdown:
+        if "High" in md.value:
+            badge_found = True
+            break
+    assert badge_found, "High plagiarism warning badge was not rendered"
+    
     # Find the "Run FAISS Search" button and click it to ensure FAISS search works
     faiss_btn = None
     for btn in at.button:
@@ -82,14 +112,6 @@ def test_app_smoke(mock_embed, mock_webhook):
     assert faiss_btn is not None
     faiss_btn.click().run()
     assert not at.exception
-    
-    # Verify warnings are present and severity badge is correct (🔴 High since similarity = 100%)
-    badge_found = False
-    for md in at.markdown:
-        if "High" in md.value:
-            badge_found = True
-            break
-    assert badge_found, "High plagiarism warning badge was not rendered"
     
     # Verify webhook alert was triggered
     mock_webhook.assert_called_once()

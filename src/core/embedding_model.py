@@ -26,6 +26,13 @@ def _get_model_name() -> str:
     """Return the configured sentence-transformers model name."""
     return os.getenv("SEMANTIC_PLAGIARISM_MODEL", _DEFAULT_MODEL_NAME)
 
+def get_embedding_model_info() -> tuple[str, int]:
+    """
+    Return the active embedding model name and embedding dimension.
+    """
+    model = _get_model()
+    return _get_model_name(), model.get_sentence_embedding_dimension()
+
 
 def _get_model() -> SentenceTransformer:
     """Lazy-load the Sentence Transformer model (singleton pattern)."""

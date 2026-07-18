@@ -13,11 +13,15 @@ from app.theme import (
     inject_css,
     set_theme,
 )
+
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Any
 from utils.warning_list import render_warning_controls
 from src.core.text_chunking import chunk_documents
-from src.core.embedding_model import embed_documents
+from src.core.embedding_model import (
+    embed_documents,
+    get_embedding_model_info,
+)
 from src.core.similarity import (
     document_similarity_matrix, flag_plagiarism,
     find_most_similar_chunks, PLAGIARISM_THRESHOLD,
@@ -123,6 +127,8 @@ if not st.session_state.get("authenticated", False):
 # Get secure role for this active interaction
 user_role = st.session_state.get("role", "user")
 
+model_name, embedding_dim = get_embedding_model_info()
+
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
 with st.sidebar:
     st.markdown("<div style='font-size: 72px; line-height: 1;'>🕵️‍♂️</div>", unsafe_allow_html=True)
@@ -174,10 +180,14 @@ with st.sidebar:
 1. Upload **PDF, DOCX, or TXT** assignment files
 2. Text is extracted according to the file type
 3. Text is split into **paragraph chunks**
-4. Chunks are embedded with **all-MiniLM-L6-v2**
+4. Chunks are embedded with **{model_name}**
 5. A **FAISS index** is built over all chunk vectors
 6. Pairs above the threshold are flagged
 """)
+    st.info(
+    f"**Active Model:** {model_name}\n\n"
+    f"**Dimension:** {embedding_dim}"
+)
     st.markdown("---")
     st.caption("Semantic Plagiarism Detector · FAISS edition")
     

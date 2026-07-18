@@ -16,6 +16,7 @@ from app.theme import (
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Any
 from utils.warning_list import render_warning_controls
+from app.components.incident_export import render_incident_export_panel
 from src.core.text_chunking import chunk_documents
 from src.core.embedding_model import embed_documents
 from src.core.similarity import (
@@ -766,12 +767,16 @@ else:
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs([
+    (
+        tab_warnings, tab_faiss, tab_matrix, tab_heatmap,
+        tab_drill, tab_corpus, tab_users,
+    ) = st.tabs([
         "⚠️ Plagiarism Warnings",
         "⚡ FAISS Chunk Search",
         "📋 Similarity Matrix",
         "🗺️ Heatmap",
         "🔬 Pair Drill-Down",
+        "🗃️ Manage Corpus",
         "👥 User Management",
     ])
 
@@ -1026,6 +1031,10 @@ else:
                 with t2:
                     st.markdown(f"**{doc_b}**")
                     st.text_area("", raw_texts.get(doc_b, "(empty)"), height=300, key="tb")
+
+    # ══ TAB 6: Manage Corpus ════════════════════════════════════════════════════
+    with tab_corpus:
+        render_incident_export_panel(flags)
 
     # ══ TAB 6: User Management ═══════════════════════════════════════════════════
     with tab_users:

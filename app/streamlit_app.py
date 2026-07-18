@@ -23,8 +23,7 @@ from src.core.similarity import (
     find_most_similar_chunks, PLAGIARISM_THRESHOLD,
 )
 
-from utils.heatmap      import plot_similarity_heatmap, plot_chunk_similarity_comparison
-from utils.faiss_index  import build_index, find_plagiarised_chunks, search_similar_chunks
+
 from utils.warning_list import render_warning_controls
 from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
 from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix, ChunkRecord
@@ -72,7 +71,14 @@ if "last_interaction" in st.session_state and st.session_state.get("authenticate
     elapsed_time = time.time() - st.session_state.last_interaction
     if elapsed_time > TIMEOUT_LIMIT:
         # Clear sensitive session variables on timeout
-        for key in ["authenticated", "username", "role", "last_interaction"]:
+        for key in [
+            "authenticated",
+            "username",
+            "role",
+            "last_interaction",
+            "analysis_results",
+            "analysis_file_signature",
+        ]:
             if key in st.session_state:
                 del st.session_state[key]
         st.warning("⏱️ Your session has expired due to 15 minutes of inactivity. Please log in again.")
@@ -324,24 +330,33 @@ else:
     else:
         faiss_index = None
         registry = []
+
+    if "analysis_results" not in st.session_state:
+        st.session_state.analysis_results = None
+
+    if "analysis_file_signature" not in st.session_state:
+        st.session_state.analysis_file_signature = None
     
     uploaded_files = st.file_uploader(
-        "📂 Upload Assignment Files",
-        type=["pdf", "docx", "txt"],
+        "📂 Upload Assignment PDFs",
+        type=["pdf"],
         accept_multiple_files=True,
-        help="Upload 2 or more PDF, DOCX, or TXT assignment files.",
+        help="Upload 2 or more PDF files.",
     )
+
     
-    file_bytes_dict = {}
-    if uploaded_files:
-        for f in uploaded_files:
-            file_bytes_dict[f.name] = f.read()
-            f.seek(0)
+    # Use getvalue() so uploaded bytes remain available on every Streamlit rerun.
+    # Calling read() advances the UploadedFile stream and can return empty bytes
+    # after changing a tab, selectbox, checkbox, or slider.
+    file_bytes_dict = {
+        uploaded_file.name: uploaded_file.getvalue()
+        for uploaded_file in uploaded_files
+    }
     
     # Allow analysis with existing index even without new uploads
-    if not uploaded_files:
-        if faiss_index is None or faiss_index.ntotal == 0:
-            st.info("👆 Please upload **at least 2** PDF, DOCX, or TXT assignment files to begin.")
+    if not uploaded_files or len(uploaded_files) < 2:
+        if st.session_state.analysis_results is None:
+            st.info("👆 Please upload **at least 2** PDF assignment files to begin.")
             st.stop()
         else:
             st.success(f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents")
@@ -546,171 +561,175 @@ else:
         )
 
 
-    # Filter already-uploaded files, but do not save new files to the database
-    # until PDF extraction and the complete pipeline succeed.
-    new_files = {}
-    skipped_files = []
-
-    for uploaded_file in uploaded_files:
-        file_data = uploaded_file.getvalue()
-        file_hash = hashlib.sha256(file_data).hexdigest()
-        existing = get_document_by_hash(file_hash)
-
-        if existing:
-            skipped_files.append(uploaded_file.name)
-        else:
-            new_files[uploaded_file.name] = {
-                "data": file_data,
-                "hash": file_hash,
-            }
-    if skipped_files:
-        st.info(
-            f"⏭️ Skipped {len(skipped_files)} already-uploaded files: "
-            f"{', '.join(skipped_files)}"
+    # ── Persistent analysis state ────────────────────────────────────────────────
+    # Streamlit reruns the full script whenever a widget changes. Keep the
+    # completed pipeline outputs in session_state so tab and selectbox changes do
+    # not reset document counts, similarity matrices, flags, or FAISS metrics.
+    file_signature = tuple(
+        sorted(
+            (
+                name,
+                len(data),
+                hashlib.sha256(data).hexdigest(),
+            )
+            for name, data in file_bytes_dict.items()
         )
+    )
 
-    if not new_files:
-        st.warning(
-            "No new files to upload. All uploaded files are already "
-            "in the database."
-        )
-        if faiss_index is None:
-            st.stop()
-        # Continue with the existing index for analysis.
-    else:
-        st.info(f"📤 Processing {len(new_files)} new files...")
+    analysis_is_current = (
+        st.session_state.analysis_results is not None
+        and st.session_state.analysis_file_signature == file_signature
+    )
 
-        pipeline_files = {
-            name: file_info["data"]
-            for name, file_info in new_files.items()
-        }
-
+    if not analysis_is_current:
         try:
             with st.spinner(
-                "🧠 Processing new files, building embeddings and FAISS index…"
+                "🧠 Processing PDFs, building embeddings and FAISS index…"
             ):
-                (
-                    raw_texts_new,
-                    chunked_docs_new,
-                    embeddings_new,
-                    sim_df_new,
-                    chunk_sim_df_new,
-                    faiss_index_new,
-                    registry_new,
-                ) = run_pipeline(pipeline_files)
-
+                analysis_results = run_pipeline(file_bytes_dict)
         except OCRDependencyError as exc:
             failed_files = getattr(
                 exc,
                 "failed_files",
-                list(pipeline_files.keys()),
+                list(file_bytes_dict.keys()),
             )
-
             show_ocr_dependency_error(
                 failed_files=failed_files,
                 error_message=str(exc),
             )
             st.stop()
 
-        # The complete pipeline succeeded, so the documents can now be stored.
-        for doc_name, file_info in new_files.items():
-            meta = metadata_dict.get(doc_name, {"student_name": "", "class_section": "", "assignment_title": ""})
-            add_document(
-                doc_name,
-                file_info["hash"],
-                class_section=meta["class_section"],
-                student_name=meta["student_name"],
-                assignment_title=meta["assignment_title"]
-            )
+        (
+            raw_texts,
+            chunked_docs,
+            embeddings,
+            sim_df,
+            chunk_sim_df,
+            faiss_index,
+            registry,
+        ) = analysis_results
 
-        # If an index already exists, append the new vectors.
-        if faiss_index is not None:
-            all_vectors = []
-            all_registry = registry.copy()
+        st.session_state.analysis_results = analysis_results
+        st.session_state.analysis_file_signature = file_signature
 
-            for doc_name, emb in embeddings_new.items():
-                chunks = chunked_docs_new.get(doc_name, [])
-                if emb.ndim != 2 or emb.shape[0] == 0:
-                    continue
+        # Persist only documents that are not already stored. Database duplicate
+        # detection must not decide whether dashboard data remains visible.
+        saved_documents = 0
+        skipped_documents = []
 
-                for i, (vec, chunk_text) in enumerate(zip(emb, chunks)):
-                    all_vectors.append(vec.astype("float32"))
-                    all_registry.append(
-                        ChunkRecord(doc_name, i, chunk_text)
-                    )
+        for uploaded_file in uploaded_files:
+            file_data = file_bytes_dict[uploaded_file.name]
+            file_hash = hashlib.sha256(file_data).hexdigest()
+            existing = get_document_by_hash(file_hash)
 
-            if all_vectors:
-                matrix = np.vstack(all_vectors)
-                faiss_index.add(matrix)  # type: ignore[arg-type]
-                registry = all_registry
-                st.success(
-                    f"✅ Added {len(all_vectors)} new vectors to existing index"
-                )
-            raw_texts = raw_texts_new
-            chunked_docs = chunked_docs_new
-            embeddings = embeddings_new
-            sim_df = sim_df_new
-            chunk_sim_df = chunk_sim_df_new
-        else:
-            # No existing index: use the newly generated data.
-            faiss_index = faiss_index_new
-            registry = registry_new
-
-        # Always set pipeline variables from the new results
-        raw_texts = raw_texts_new
-        chunked_docs = chunked_docs_new
-        embeddings = embeddings_new
-        sim_df = sim_df_new
-        chunk_sim_df = chunk_sim_df_new
-
-        # Save the updated FAISS index.
-        save_index(faiss_index, _INDEX_PATH)
-
-        # Store chunks in the database for persistence.
-        for doc_name, emb in embeddings_new.items():
-            chunks = chunked_docs_new.get(doc_name, [])
-            if emb.ndim != 2 or emb.shape[0] == 0:
+            if existing:
+                skipped_documents.append(uploaded_file.name)
                 continue
 
-            start_id = len(
-                [record for record in registry if record.doc_name != doc_name]
+            meta = metadata_dict.get(
+                uploaded_file.name,
+                {
+                    "student_name": "",
+                    "class_section": "",
+                    "assignment_title": "",
+                },
             )
-            chunks_to_add = []
 
-            for i, (vec, chunk_text) in enumerate(zip(emb, chunks)):
-                chunks_to_add.append(
-                    (start_id + i, doc_name, i, chunk_text, vec)
-                )
+            add_document(
+                uploaded_file.name,
+                file_hash,
+                class_section=meta["class_section"],
+                student_name=meta["student_name"],
+                assignment_title=meta["assignment_title"],
+            )
 
-            add_chunks(chunks_to_add)
-    # If we have an existing index but no new files, load existing data
-    if faiss_index is not None and not new_files:
-        # For now, we need to rebuild the full pipeline for similarity matrix
-        # This is a limitation - we'd need to store raw_texts in DB to avoid this
-        st.warning("⚠️ Similarity matrix requires re-uploading files. FAISS search is available with existing index.")
-        # For full functionality, require uploads
-        if not new_files:
-            st.info("Please upload files to generate similarity matrix. FAISS search is available below.")
-            # We'll allow FAISS search but skip the matrix
-            raw_texts = {}
-            chunked_docs = {}
-            embeddings = {}
-            sim_df = None
-            chunk_sim_df = None
-            active_sim_df = None
-            flags = []
+            doc_embeddings = embeddings.get(uploaded_file.name)
+            doc_chunks = chunked_docs.get(uploaded_file.name, [])
+
+            if (
+                doc_embeddings is not None
+                and getattr(doc_embeddings, "ndim", 0) == 2
+                and doc_embeddings.shape[0] > 0
+            ):
+                chunks_to_add = []
+
+                # The database stores a globally unique vector/index identifier.
+                existing_registry_size = len(get_chunk_registry())
+                for chunk_index, (vector, chunk_text) in enumerate(
+                    zip(doc_embeddings, doc_chunks)
+                ):
+                    chunks_to_add.append(
+                        (
+                            existing_registry_size + chunk_index,
+                            uploaded_file.name,
+                            chunk_index,
+                            chunk_text,
+                            vector,
+                        )
+                    )
+
+                if chunks_to_add:
+                    add_chunks(chunks_to_add)
+
+            saved_documents += 1
+
+        if skipped_documents:
+            st.info(
+                f"⏭️ Already stored in the database: "
+                f"{', '.join(skipped_documents)}"
+            )
+
+        if saved_documents:
+            st.success(
+                f"✅ Added {saved_documents} new document"
+                f"{'s' if saved_documents != 1 else ''} to the database."
+            )
+
+        # Save the current analysis index. The in-memory analysis remains the
+        # source of truth for this upload set throughout the Streamlit session.
+        if faiss_index is not None:
+            save_index(faiss_index, _INDEX_PATH)
+
     else:
-        # Check for files from which no usable text could be extracted
-        empty_docs = [name for name, text in raw_texts.items() if not text.strip()]
-        if empty_docs:
-            st.warning(
-                f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}. "
-                "The files may be empty, unsupported, scanned, corrupted, "
-                "or password-protected."
-            )
+        (
+            raw_texts,
+            chunked_docs,
+            embeddings,
+            sim_df,
+            chunk_sim_df,
+            faiss_index,
+            registry,
+        ) = st.session_state.analysis_results
 
-        active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
-        flags         = flag_plagiarism(active_sim_df, threshold=threshold)
+    # Optional explicit reset. Normal widget changes must never clear analysis.
+    if st.button(
+        "🗑️ Clear current analysis",
+        key="clear_current_analysis",
+        help="Clear the current upload analysis and start with a new set of files.",
+    ):
+        st.session_state.analysis_results = None
+        st.session_state.analysis_file_signature = None
+        run_pipeline.clear()
+        st.rerun()
+
+    empty_docs = [
+        name
+        for name, extracted_text in raw_texts.items()
+        if not extracted_text.strip()
+    ]
+    if empty_docs:
+        st.warning(
+            f"⚠️ **Could not extract text from:** {', '.join(empty_docs)}. "
+            "The files may be empty, unsupported, scanned, corrupted, "
+            "or password-protected."
+        )
+
+    active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
+    flags = (
+        flag_plagiarism(active_sim_df, threshold=threshold)
+        if active_sim_df is not None
+        else []
+    )
 
     # Apply Class/Section filter if selected
     if selected_class != "All Classes":
@@ -737,8 +756,14 @@ else:
         st.session_state.notified_pairs = set()
     
     if active_sim_df is not None:
-        current_files = sorted(list(new_files.keys()))
-        if "last_uploaded_files" not in st.session_state or st.session_state.last_uploaded_files != current_files:
+        # Use the currently analysed upload set. The previous implementation
+        # referenced `new_files`, but that variable no longer exists after the
+        # session-persistence refactor.
+        current_files = sorted(raw_texts.keys())
+        if (
+            "last_uploaded_files" not in st.session_state
+            or st.session_state.last_uploaded_files != current_files
+        ):
             st.session_state.last_uploaded_files = current_files
             st.session_state.notified_pairs = set()
 
@@ -765,7 +790,10 @@ else:
     col3.metric("🚨 Flagged",     n_flagged,
                 delta=f"{n_high} High" if n_high else None, delta_color="inverse")
     col4.metric("📈 Avg Similarity", f"{avg_sim:.1%}")
-    col5.metric("🗂️ FAISS Vectors", faiss_index.ntotal)
+    col5.metric(
+        "🗂️ FAISS Vectors",
+        faiss_index.ntotal if faiss_index is not None else 0,
+    )
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────

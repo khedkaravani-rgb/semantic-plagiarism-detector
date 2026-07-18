@@ -36,6 +36,8 @@ THEMES = {
         "neutral_soft": "#1E293B",
     },
 }
+# Backward-compatible default palette used by existing tests and callers.
+COLORS = THEMES["Light"]
 def initialize_theme() -> None:
     """Initialize the active theme for the current session."""
     if "theme" not in st.session_state:
@@ -379,3 +381,4 @@ def badge_html(tier: str, label: str = None) -> str:
         
     display_label = label if label is not None else default_label
     return f'<span class="badge" style="background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color};">{display_label}</span>'
+

@@ -195,8 +195,10 @@ def get_document_chunks_count(filename: str) -> int:
 
 
 def clear_all_data() -> None:
-    """Wipe all database records (useful for reset)."""
+    init_corpus_db()
+
     with _connect() as conn:
+        conn.execute("DELETE FROM chunks")
         conn.execute("DELETE FROM documents")
         conn.commit()
 

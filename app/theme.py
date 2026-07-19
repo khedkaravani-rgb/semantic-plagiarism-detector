@@ -381,3 +381,4 @@ def badge_html(tier: str, label: str = None) -> str:
         
     display_label = label if label is not None else default_label
     return f'<span class="badge" style="background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color};">{display_label}</span>'
+

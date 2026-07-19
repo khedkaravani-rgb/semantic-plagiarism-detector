@@ -1,7 +1,6 @@
 import io
 import shutil
 import pytest
-import pypdf
 import docx
 from unittest.mock import MagicMock, patch
 from src.core.document_parser import (
@@ -18,7 +17,6 @@ TESSERACT_AVAILABLE = shutil.which("tesseract") is not None
 
 def _make_pdf_bytes(text: str) -> bytes:
     """Create a minimal in-memory PDF containing the given text."""
-    writer = pypdf.PdfWriter()
     from reportlab.pdfgen import canvas
     buf = io.BytesIO()
     c = canvas.Canvas(buf)

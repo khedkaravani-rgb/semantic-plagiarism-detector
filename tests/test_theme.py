@@ -1,4 +1,3 @@
-import pytest
 from app.theme import severity_tier, tier_from_severity_label, tier_color, badge_html, COLORS
 
 def test_severity_tier():

@@ -1,6 +1,5 @@
 """Verifies that vectors use translated text while the registry keeps source text."""
 
-import numpy as np
 
 from src.core.cross_lingual import prepare_documents_for_embedding
 

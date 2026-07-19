@@ -1,60 +1,85 @@
-import sys, os
+import sys
+import os
 
-from src.core.cross_lingual import prepare_documents_for_embedding
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-import io as _io
-import time
-import numpy as np
-import pandas as pd
-import streamlit as st
-from app.theme import (
+import hashlib  # noqa: E402
+import io as _io  # noqa: E402
+import time  # noqa: E402
+
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
+from app.theme import (  # noqa: E402
     get_theme_name,
     inject_css,
     set_theme,
 )
-
-from sklearn.metrics.pairwise import cosine_similarity
-from typing import Any
-from utils.warning_list import render_warning_controls
-from app.components.incident_export import render_incident_export_panel
-from src.core.text_chunking import chunk_documents
-from src.core.embedding_model import (
+from sklearn.metrics.pairwise import cosine_similarity  # noqa: E402
+from src.core.document_parser import (  # noqa: E402
+    OCRDependencyError,
+    extract_text,
+)
+from src.core.embedding_model import (  # noqa: E402
     embed_documents,
     get_embedding_model_info,
 )
-from src.core.similarity import (
-    document_similarity_matrix, flag_plagiarism,
-    find_most_similar_chunks, PLAGIARISM_THRESHOLD,
+from src.core.faiss_index import (  # noqa: E402
+    build_index,
+    build_index_from_matrix,
+    find_plagiarised_chunks,
+    load_index,
+    save_index,
+    search_similar_chunks,
 )
-
-
-from utils.warning_list import render_warning_controls
-from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
-from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix, ChunkRecord
-from src.visualization.network_graph import plot_similarity_network
-from src.core.webhook import send_plagiarism_alert
-from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks, get_unique_class_sections, get_documents_by_class
-from src.core.document_parser import (
-    OCRDependencyError,
-    extract_text,
-    prepare_text_for_embedding,
+from src.core.similarity import (  # noqa: E402
+    PLAGIARISM_THRESHOLD,
+    document_similarity_matrix,
+    find_most_similar_chunks,
+    flag_plagiarism,
 )
-import hashlib
+from src.core.text_chunking import chunk_documents  # noqa: E402
+from src.core.webhook import send_plagiarism_alert  # noqa: E402
+from src.db import (  # noqa: E402
+    add_chunks,
+    add_document,
+    delete_document,
+    get_all_documents,
+    get_all_embeddings,
+    get_chunk_registry,
+    get_document_by_hash,
+    get_documents_by_class,
+    get_unique_class_sections,
+    init_corpus_db,
+)
+from src.db.auth import (  # noqa: E402
+    add_user,
+    delete_user,
+    get_all_users,
+    get_user_role,
+    init_db,
+    update_password,
+    verify_user,
+)
+from src.utils.pdf_report import generate_plagiarism_report  # noqa: E402
+from src.visualization.heatmap import (  # noqa: E402
+    plot_chunk_similarity_comparison,
+    plot_similarity_heatmap,
+)
+from src.visualization.network_graph import plot_similarity_network  # noqa: E402
+from typing import Any  # noqa: E402
+from utils.warning_list import render_warning_controls  # noqa: E402
 
 # Initialize corpus database
 init_corpus_db()
 
 # FAISS index file path
 _INDEX_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "corpus.index"))
-from src.utils.pdf_report import generate_plagiarism_report
-from src.db.auth import init_db, verify_user, get_user_role, add_user, get_all_users, delete_user, update_password
 
 # Initialize database
 init_db()
-from src.db.auth import init_db, verify_user, get_user_role
 # Must be the first Streamlit command called
 st.set_page_config(
     page_title="Semantic Plagiarism Detector",
@@ -888,9 +913,11 @@ else:
                     ):
                         cq, cm = st.columns(2)
                         with cq:
-                            st.markdown("**Your query:**"); st.info(query_text.strip())
+                            st.markdown("**Your query:**")
+                            st.info(query_text.strip())
                         with cm:
-                            st.markdown(f"**Match in {record.doc_name}:**"); st.warning(record.chunk_text)
+                            st.markdown(f"**Match in {record.doc_name}:**")
+                            st.warning(record.chunk_text)
 
     # ══ TAB 3 ════════════════════════════════════════════════════════════════════
     with tab_matrix:
@@ -900,8 +927,10 @@ else:
         else:
             def _highlight(val: Any) -> str:
                 numeric_val = float(val)
-                if numeric_val >= 0.90:         return "background-color:#ff4b4b;color:white;font-weight:bold;"
-                elif numeric_val >= threshold:  return "background-color:#ffa500;color:white;font-weight:bold;"
+                if numeric_val >= 0.90:
+                    return "background-color:#ff4b4b;color:white;font-weight:bold;"
+                elif numeric_val >= threshold:
+                    return "background-color:#ffa500;color:white;font-weight:bold;"
                 return ""
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
             st.dataframe(styled_df, use_container_width=True)
@@ -972,9 +1001,15 @@ else:
             st.warning("Need at least 2 documents.")
         else:
             c1, c2 = st.columns(2)
-            with c1: doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
-            with c2: doc_b = st.selectbox("Document B",
-                                           [d for d in doc_names if d != doc_a], index=0, key="db")
+            with c1:
+                doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
+            with c2:
+                doc_b = st.selectbox(
+                    "Document B",
+                    [d for d in doc_names if d != doc_a],
+                    index=0,
+                    key="db"
+                )
 
             score = float(active_sim_df.loc[doc_a, doc_b])
             score_color = "#ff4b4b" if score >= 0.9 else ("#ffa500" if score >= threshold else "#21c55d")
@@ -1004,8 +1039,12 @@ else:
                     for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
                         with st.expander(f"#{rank} — Similarity: {sim:.1%}", expanded=(rank == 1)):
                             col1, col2 = st.columns(2)
-                            with col1: st.markdown(f"**From {doc_a}**"); st.info(ca)
-                            with col2: st.markdown(f"**From {doc_b}**"); st.warning(cb)
+                            with col1:
+                                st.markdown(f"**From {doc_a}**")
+                                st.info(ca)
+                            with col2:
+                                st.markdown(f"**From {doc_b}**")
+                                st.warning(cb)
                     
                     st.divider()
                     st.subheader("📄 Generate PDF Report")

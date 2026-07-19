@@ -1,4 +1,3 @@
-import pytest
 from src.core.text_chunking import _clean_text, _word_count, _split_into_paragraphs, chunk_document
 
 def test_clean_text():

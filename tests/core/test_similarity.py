@@ -53,11 +53,6 @@ def test_chunk_max_similarity_rejects_invalid_batch_size(dummy_embeddings):
         chunk_max_similarity(dummy_embeddings["doc_A"], dummy_embeddings["doc_B"], batch_size=0.5)
 
 
-def test_chunk_max_similarity_rejects_invalid_batch_size(dummy_embeddings):
-    with pytest.raises(ValueError, match="batch_size must be an integer"):
-        chunk_max_similarity(dummy_embeddings["doc_A"], dummy_embeddings["doc_B"], batch_size=0.5)
-
-
 def test_document_similarity_matrix(dummy_embeddings):
     df = document_similarity_matrix(dummy_embeddings)
     

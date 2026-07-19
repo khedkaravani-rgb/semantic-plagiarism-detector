@@ -1,5 +1,4 @@
 import pytest
-import os
 import numpy as np
 from src.db.corpus_db import (
     init_corpus_db,
@@ -13,8 +12,7 @@ from src.db.corpus_db import (
     clear_all_data,
     get_document_chunks_count,
     get_unique_class_sections,
-    get_documents_by_class,
-    _DB_PATH
+    get_documents_by_class
 )
 
 

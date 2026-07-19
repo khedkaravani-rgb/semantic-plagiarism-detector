@@ -20,27 +20,25 @@ Outputs (saved to evaluation/results/):
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import auc, precision_recall_curve, roc_curve
+from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
 # ── Ensure project root is importable ──────────────────────────────────────────
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
-from sklearn.metrics import roc_curve, auc, precision_recall_curve
-
-import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
-from src.core.embedding_model import embed_chunks
+from src.core.embedding_model import embed_chunks  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -257,8 +255,8 @@ def evaluate():
     print("  SEMANTIC PLAGIARISM DETECTOR -- EVALUATION REPORT")
     print("=" * 72)
     print(f"  Dataset : {len(pairs)} pairs  ({n_pos} plagiarized,  {n_neg} not plagiarized)")
-    print(f"  Model   : all-MiniLM-L6-v2  (384-dim, L2-normalised)")
-    print(f"  Baseline: TF-IDF + cosine similarity")
+    print("  Model   : all-MiniLM-L6-v2  (384-dim, L2-normalised)")
+    print("  Baseline: TF-IDF + cosine similarity")
     print("-" * 72)
 
     # ── Compute similarities ──────────────────────────────────────────────────

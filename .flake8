@@ -9,5 +9,31 @@ exclude =
     dist,
     .streamlit,
     .devcontainer
-# Ignore stylistic/legacy warnings that exist in the repository to ensure CI style checks pass
-ignore = E111, E121, E122, E127, E131, E221, E226, E241, E261, E272, E301, E302, E303, E401, E402, E501, E701, E702, F401, F541, F811, F841, W291, W292, W293, W391, W503
+
+# Enforce PEP 8 line length limits (E501) and correctness checks (F*) globally, 
+# while ignoring minor stylistic legacy warnings.
+ignore = E111, E121, E122, E127, E131, E221, E226, E241, E261, E272, E301, E302, E303, E401, E402, E701, E702, W291, W292, W293, W391, W503
+
+per-file-ignores =
+    # Legacy files with existing F* and E501 violations
+    app/streamlit_app.py: E501, F401, F811, F841
+    app/theme.py: E501
+    evaluation/evaluate.py: E501, F401, F541, F841
+    src/core/document_parser.py: E501
+    src/core/faiss_index.py: E501
+    src/db/corpus_db.py: E501
+    src/utils/pdf_report.py: E501, F401
+    src/visualization/heatmap.py: E501
+    src/visualization/network_graph.py: E501
+    tests/conftest.py: F401
+    tests/core/test_document_parser.py: F841
+    tests/core/test_similarity.py: E501, F811
+    tests/core/test_text_chunking.py: E501, F401
+    tests/core/test_translator.py: F401
+    tests/core/test_webhook.py: F401
+    tests/db/test_corpus_db.py: F401
+    tests/test_app_smoke.py: E501
+    tests/test_theme.py: F401
+    tests/visualization/test_network_graph.py: F401
+    utils/pdf_report.py: E501, F401
+    utils/warning_list.py: E501

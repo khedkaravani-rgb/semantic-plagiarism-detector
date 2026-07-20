@@ -15,8 +15,9 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
 from io import BytesIO
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from datetime import datetime
 
 
@@ -51,11 +52,13 @@ def generate_plagiarism_report(
     overall_similarity: float,
     threshold: float,
     top_pairs: List[Tuple[str, str, float]],
-    report_title: str = "Plagiarism Detection Report"
+    report_title: str = "Plagiarism Detection Report",
+    logo_image: Optional[bytes] = None,
+    brand_color: Optional[str] = None,
 ) -> BytesIO:
     """
     Generates a professional PDF plagiarism report for a document pair.
-    
+
     Args:
         doc_a: Name of the first document
         doc_b: Name of the second document
@@ -63,17 +66,34 @@ def generate_plagiarism_report(
         threshold: Plagiarism threshold used for detection
         top_pairs: List of (chunk_a, chunk_b, similarity) tuples for top matches
         report_title: Title for the PDF report
-        
+        logo_image: Optional raw bytes of a PNG/JPG logo for the PDF header
+        brand_color: Optional hex color string (e.g. "#1e3a8a") for headings
+
     Returns:
         BytesIO buffer containing the generated PDF
     """
+    brand_hex = brand_color or "#1e3a8a"
+    brand_clr = HexColor(brand_hex)
+
+    # Determine top margin to leave room for logo header
+    logo_height = 0
+    if logo_image:
+        try:
+            reader = ImageReader(BytesIO(logo_image))
+            iw, ih = reader.getSize()
+            logo_display_w = 1.5 * inch
+            logo_display_h = logo_display_w * ih / iw
+            logo_height = logo_display_h + 0.25 * inch
+        except Exception:
+            logo_height = 0
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
         rightMargin=72,
         leftMargin=72,
-        topMargin=72,
+        topMargin=72 + logo_height,
         bottomMargin=18
     )
     
@@ -83,7 +103,7 @@ def generate_plagiarism_report(
         'CustomTitle',
         parent=styles['Heading1'],
         fontSize=18,
-        textColor=HexColor("#1e3a8a"),
+        textColor=brand_clr,
         spaceAfter=30,
         alignment=TA_CENTER
     )
@@ -91,13 +111,33 @@ def generate_plagiarism_report(
         'CustomHeading',
         parent=styles['Heading2'],
         fontSize=14,
-        textColor=HexColor("#1e40af"),
+        textColor=brand_clr,
         spaceAfter=12,
         spaceBefore=20
     )
     normal_style = styles['Normal']
     normal_style.fontSize = 10
     normal_style.leading = 14
+
+    # ── Header / footer callback for logo ──────────────────────────────────
+    def _draw_header(canvas_obj, _doc):
+        if not logo_image:
+            return
+        canvas_obj.saveState()
+        try:
+            reader = ImageReader(BytesIO(logo_image))
+            iw, ih = reader.getSize()
+            logo_display_w = 1.5 * inch
+            logo_display_h = logo_display_w * ih / iw
+            x = _doc.leftMargin
+            y = _doc.pagesize[1] - 36 - logo_display_h
+            canvas_obj.drawImage(
+                reader, x, y, width=logo_display_w, height=logo_display_h,
+                preserveAspectRatio=True, mask='auto',
+            )
+        except Exception:
+            pass
+        canvas_obj.restoreState()
     
     # Build story (PDF content)
     story = []
@@ -235,6 +275,6 @@ def generate_plagiarism_report(
     ))
     
     # Build PDF
-    doc.build(story)
+    doc.build(story, onFirstPage=_draw_header, onLaterPages=_draw_header)
     buffer.seek(0)
     return buffer

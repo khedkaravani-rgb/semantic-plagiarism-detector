@@ -4,6 +4,7 @@ faiss-cpu>=1.8.0                # FAISS ANN search (use faiss-gpu if CUDA availa
 # ── Core NLP ──────────────────────────────────────────────────────────────────
 sentence-transformers>=2.7.0    # Transformer embeddings (all-MiniLM-L6-v2)
 torch>=2.0.0                    # PyTorch backend for sentence-transformers
+transformers>=4.30.0            # HuggingFace transformers for AI detection
 
 # ── PDF & Document Parsing ────────────────────────────────────────────────────
 pypdf>=5.0.0                    # Extract text from PDF files

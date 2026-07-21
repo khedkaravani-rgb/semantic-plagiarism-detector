@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from app.theme import (
+    back_to_top_html,
     empty_state_html,
     format_similarity_html,
     get_colors,
@@ -137,6 +138,7 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+st.markdown(back_to_top_html(), unsafe_allow_html=True)
 
 # ── SESSION TIMEOUT & ROUTE PROTECTION MIDDLEWARE ─────────────────────────────
 TIMEOUT_LIMIT = 15 * 60  # 15 minutes in seconds

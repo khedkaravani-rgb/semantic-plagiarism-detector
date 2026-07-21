@@ -8,7 +8,6 @@ Tests healthcheck, Bearer token authentication, and document scanning endpoint.
 import io
 from unittest.mock import patch
 import numpy as np
-import pytest
 from fastapi.testclient import TestClient
 
 from src.api.app import app, get_expected_bearer_token

@@ -1,18 +1,13 @@
-"""
-src/api/app.py
---------------
-FastAPI REST API application exposing secure endpoints for external
-Learning Management Systems (Canvas, Moodle, Blackboard, etc.).
-"""
+"""src/api/app.py - FastAPI REST API for LMS integration."""
 
 import os
-from typing import Dict, List, Optional
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
+from typing import Dict
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPBearer
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 from src.core.document_parser import extract_text
 from src.core.embedding_model import embed_chunks, get_document_embedding
@@ -52,7 +47,7 @@ def get_expected_bearer_token() -> str:
 
 
 def verify_bearer_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials=Depends(security),
 ) -> str:
     """Validate incoming Bearer token against configured secret."""
     expected_token = get_expected_bearer_token()
@@ -68,15 +63,7 @@ def verify_bearer_token(
 # ── Database Helpers ───────────────────────────────────────────────────────────
 
 def get_corpus_documents_with_embeddings() -> Dict[str, Dict]:
-    """
-    Load all stored corpus documents, their text chunks, and chunk embeddings from SQLite.
-    
-    Returns:
-        Dict mapping filename -> {
-            "chunks": List[str],
-            "embeddings": np.ndarray (N x 384)
-        }
-    """
+    """Load all stored corpus documents, text chunks, and chunk embeddings from SQLite."""
     init_corpus_db()
     corpus: Dict[str, Dict] = {}
 
@@ -85,10 +72,10 @@ def get_corpus_documents_with_embeddings() -> Dict[str, Dict]:
             "SELECT filename, chunk_index, chunk_text, embedding FROM chunks ORDER BY filename, chunk_index"
         ).fetchall()
 
-    for filename, chunk_index, chunk_text, embedding_blob in rows:
+    for filename, _chunk_index, chunk_text, embedding_blob in rows:
         if filename not in corpus:
             corpus[filename] = {"chunks": [], "embeddings": []}
-        
+
         vec = np.frombuffer(embedding_blob, dtype=np.float32)
         corpus[filename]["chunks"].append(chunk_text)
         corpus[filename]["embeddings"].append(vec)
@@ -130,13 +117,9 @@ async def scan_document(
         le=10,
         description="Number of top matching paragraph pairs to include per matched document",
     ),
-    token: str = Depends(verify_bearer_token),
+    _token: str = Depends(verify_bearer_token),
 ):
-    """
-    Scan an uploaded document against the indexed corpus database for plagiarism.
-    
-    Requires Bearer token authentication in the Authorization header.
-    """
+    """Scan an uploaded document against the indexed corpus database for plagiarism."""
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

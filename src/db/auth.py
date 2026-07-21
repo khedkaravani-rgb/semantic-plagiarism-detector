@@ -12,6 +12,8 @@ add_user(username, password, role) → None
 get_all_users()                    → list[dict]
 delete_user(username)              → None
 update_password(username, password)→ None
+get_tour_completed(username)       → bool
+set_tour_completed(username, completed) → None
 """
 
 import sqlite3
@@ -35,10 +37,19 @@ def init_db() -> None:
                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT    UNIQUE NOT NULL,
                 password TEXT    NOT NULL,
-                role     TEXT    NOT NULL DEFAULT 'teacher'
+                role     TEXT    NOT NULL DEFAULT 'teacher',
+                tour_completed INTEGER DEFAULT 0
             )
         """)
         conn.commit()
+        
+        # Schema migration: add tour_completed column if it doesn't exist
+        cursor = conn.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "tour_completed" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN tour_completed INTEGER DEFAULT 0")
+            conn.commit()
+        
         exists = conn.execute(
             "SELECT 1 FROM users WHERE username = ?", ("admin",)
         ).fetchone()
@@ -105,5 +116,24 @@ def update_password(username: str, new_password: str) -> None:
         conn.execute(
             "UPDATE users SET password = ? WHERE username = ?",
             (hashed, username.lower()),
+        )
+        conn.commit()
+
+
+def get_tour_completed(username: str) -> bool:
+    """Return whether a user has completed the onboarding tour."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT tour_completed FROM users WHERE username = ?", (username.lower(),)
+        ).fetchone()
+    return bool(row[0]) if row else False
+
+
+def set_tour_completed(username: str, completed: bool = True) -> None:
+    """Mark a user as having completed the onboarding tour."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET tour_completed = ? WHERE username = ?",
+            (1 if completed else 0, username.lower()),
         )
         conn.commit()

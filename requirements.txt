@@ -17,6 +17,7 @@ bcrypt>=4.0.0                   # Password hashing for auth
 python-dotenv>=1.0.0            # Load credentials from .env
 plotly>=5.20.0                  # Interactive heatmap with hover values
 deep-translator>=1.11.4         # Translation alignment for cross-lingual support
+streamlit-tour>=1.1.0           # Interactive guided tour component
 
 
 # ── Data & ML ─────────────────────────────────────────────────────────────────

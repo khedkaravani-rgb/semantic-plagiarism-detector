@@ -43,3 +43,8 @@ ruff>=0.5.0
 
 # ── Caching & Session Management ───────────────────────────────────────────────
 redis>=5.0.0                    # Redis client for session state and caching
+
+# ── Integrations & APIs ────────────────────────────────────────────────────────
+google-api-python-client>=2.100.0 # Google Drive API client
+google-auth-httplib2>=0.2.0       # HTTP transport for Google Auth
+google-auth-oauthlib>=1.2.0       # OAuth 2.0 helper for user authentication

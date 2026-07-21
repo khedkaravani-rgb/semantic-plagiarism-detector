@@ -79,7 +79,28 @@ def init_incident_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         )
         conn.commit()
 
+def _validate_incident(flag: Mapping[str, Any]) -> tuple[bool, str]:
+    doc_a = str(flag.get("doc_a", "")).strip()
+    doc_b = str(flag.get("doc_b", "")).strip()
 
+    if not doc_a:
+        return False, "Missing document A."
+
+    if not doc_b:
+        return False, "Missing document B."
+
+    if doc_a == doc_b:
+        return False, "Document identifiers must be different."
+
+    try:
+        similarity = float(flag.get("similarity", 0.0))
+    except (TypeError, ValueError):
+        return False, "Similarity score must be numeric."
+
+    if not 0.0 <= similarity <= 1.0:
+        return False, "Similarity score must be between 0.0 and 1.0."
+
+    return True, ""
 def sync_flagged_incidents(
     flags: Iterable[Mapping[str, Any]],
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -91,10 +112,14 @@ def sync_flagged_incidents(
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
         for flag in flags:
-            doc_a = str(flag.get("doc_a", "")).strip()
-            doc_b = str(flag.get("doc_b", "")).strip()
-            if not doc_a or not doc_b or doc_a == doc_b:
+            is_valid, message = _validate_incident(flag)
+
+            if not is_valid:
+                print(f"Skipping invalid incident: {message}")
                 continue
+
+            doc_a = str(flag["doc_a"]).strip()
+            doc_b = str(flag["doc_b"]).strip()
             first, second = _normalise_pair(doc_a, doc_b)
             conn.execute(
                 """

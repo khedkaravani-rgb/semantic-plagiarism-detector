@@ -703,11 +703,12 @@ else:
     total_pairs = n_docs * (n_docs - 1) // 2 if n_docs > 1 else 0
     n_flagged = len(flags)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("📄 Documents", n_docs)
     col2.metric("🔗 Pairs", total_pairs)
     col3.metric("🚨 Flagged", n_flagged)
     col4.metric("🗂️ FAISS Vectors", faiss_index.ntotal if faiss_index is not None else 0)
+    col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
 
     # ── Application Tabs ──────────────────────────────────────────────────────

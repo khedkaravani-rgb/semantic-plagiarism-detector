@@ -401,28 +401,41 @@ def extract_texts_parallel(
                 errors[name] = exc
         return results, errors
 
-    from concurrent.futures import ProcessPoolExecutor
+    try:
+        from concurrent.futures import ProcessPoolExecutor
 
-    with ProcessPoolExecutor() as executor:
-        futures = {
-            executor.submit(
-                _extract_single_file_helper,
-                data,
-                name,
-                ocr_language,
-                ocr_dpi,
-            ): name
-            for name, data in files_dict.items()
-        }
-        for future in futures:
-            name = futures[future]
+        with ProcessPoolExecutor() as executor:
+            futures = {
+                executor.submit(
+                    _extract_single_file_helper,
+                    data,
+                    name,
+                    ocr_language,
+                    ocr_dpi,
+                ): name
+                for name, data in files_dict.items()
+            }
+            for future in futures:
+                name = futures[future]
+                try:
+                    text = future.result()
+                    results[name] = text
+                except Exception as exc:
+                    errors[name] = exc
+
+        return results, errors
+    except Exception as exc:
+        print(f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential extraction...")
+        results.clear()
+        errors.clear()
+        for name, data in files_dict.items():
             try:
-                text = future.result()
-                results[name] = text
-            except Exception as exc:
-                errors[name] = exc
-
-    return results, errors
+                results[name] = _extract_single_file_helper(
+                    data, name, ocr_language, ocr_dpi
+                )
+            except Exception as e:
+                errors[name] = e
+        return results, errors
 
 
 def extract_text_from_pdf(
@@ -459,10 +472,26 @@ def extract_text_from_pdf(
         from concurrent.futures import ProcessPoolExecutor
 
         page_lines = [[] for _ in range(num_pages)]
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    _parse_pdf_page,
+        try:
+            with ProcessPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _parse_pdf_page,
+                        pdf_bytes,
+                        page_index,
+                        ocr_dpi,
+                        ocr_language,
+                    )
+                    for page_index in range(num_pages)
+                ]
+                for page_index, future in enumerate(futures):
+                    page_lines[page_index] = future.result()
+        except OCRDependencyError:
+            raise
+        except Exception as exc:
+            print(f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential page parsing...")
+            page_lines = [
+                _parse_pdf_page(
                     pdf_bytes,
                     page_index,
                     ocr_dpi,
@@ -470,29 +499,16 @@ def extract_text_from_pdf(
                 )
                 for page_index in range(num_pages)
             ]
-            try:
-                for page_index, future in enumerate(futures):
-                    page_lines[page_index] = future.result()
-            except Exception:
-                for future in futures:
-                    future.cancel()
-                raise
     else:
-        try:
-            for page_index in range(num_pages):
-                page_lines.append(
-                    _parse_pdf_page(
-                        pdf_bytes,
-                        page_index,
-                        ocr_dpi,
-                        ocr_language,
-                    )
-                )
-        except OCRDependencyError:
-            raise
-        except Exception as exc:
-            print(f"[document_parser] Error reading PDF: {exc}")
-            return ""
+        page_lines = [
+            _parse_pdf_page(
+                pdf_bytes,
+                page_index,
+                ocr_dpi,
+                ocr_language,
+            )
+            for page_index in range(num_pages)
+        ]
 
     if not page_lines:
         return ""

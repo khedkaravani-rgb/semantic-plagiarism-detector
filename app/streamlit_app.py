@@ -712,7 +712,7 @@ else:
         "📂 Upload Assignments",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="file_uploader",
+        key="admin_file_uploader",
     )
 
     # 2. GOOGLE DRIVE IMPORT SECTION (#146)

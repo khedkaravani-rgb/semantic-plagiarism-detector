@@ -10,6 +10,7 @@ if _ROOT not in sys.path:
 
 import io as _io
 import time
+import datetime
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -53,13 +54,8 @@ from src.core.similarity import (  # noqa: E402
 from src.core.text_chunking import chunk_documents  # noqa: E402
 from src.core.webhook import send_plagiarism_alert  # noqa: E402
 from src.core.ai_detector import detect_documents_ai_probability  # noqa: E402
+from src.visualization.network_graph import plot_similarity_network  # noqa: E402
 from src.db import (  # noqa: E402
-    add_chunks,
-    add_document,
-    delete_document,
-from src.visualization.network_graph import plot_similarity_network
-from src.core.webhook import send_plagiarism_alert
-from src.db import (
     init_corpus_db,
     get_all_documents,
     delete_document,
@@ -72,6 +68,10 @@ from src.db import (
     get_documents_by_class,
 )
 from src.utils.pdf_report import generate_plagiarism_report  # noqa: E402
+from src.utils.badge_generator import (  # noqa: E402
+    generate_badge_png,
+    generate_badge_pdf,
+)
 from src.utils.redis_cache import (  # noqa: E402
     cache_session_state,
     get_session_state,
@@ -85,6 +85,7 @@ from src.utils.redis_cache import (  # noqa: E402
 from src.visualization.heatmap import (  # noqa: E402
     plot_chunk_similarity_comparison,
     plot_similarity_heatmap,
+)
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
@@ -518,6 +519,67 @@ if user_role != "admin":
                         st.success(
                             "✅ No significant matches found in the assignment database."
                         )
+                        
+                        # Display gamification badge for plagiarism-free result
+                        st.markdown("---")
+                        st.markdown("### 🎉 Congratulations! Your Work is Original")
+                        st.info(
+                            "Your text has been verified as plagiarism-free. "
+                            "Download your 'Originality Verified' badge below!"
+                        )
+                        
+                        # Badge preview and download options
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        
+                        with col2:
+                            # Generate badge preview
+                            try:
+                                badge_png = generate_badge_png(
+                                    student_name=st.session_state.username,
+                                    text_preview=query_text.strip()[:100]
+                                )
+                                st.image(badge_png, use_container_width=True)
+                            except Exception as e:
+                                st.warning(f"Badge preview unavailable: {str(e)}")
+                            
+                            # Download buttons
+                            dl_col1, dl_col2 = st.columns(2)
+                            
+                            with dl_col1:
+                                if st.button("📥 Download PNG", key="download_png", use_container_width=True):
+                                    try:
+                                        badge_png = generate_badge_png(
+                                            student_name=st.session_state.username,
+                                            text_preview=query_text.strip()[:100]
+                                        )
+                                        st.download_button(
+                                            label="⬇️ Click to Save PNG",
+                                            data=badge_png.getvalue(),
+                                            file_name=f"originality_badge_{st.session_state.username}_{datetime.now().strftime('%Y%m%d')}.png",
+                                            mime="image/png",
+                                            use_container_width=True
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Error generating PNG badge: {str(e)}")
+                            
+                            with dl_col2:
+                                if st.button("📄 Download PDF", key="download_pdf", use_container_width=True):
+                                    try:
+                                        badge_pdf = generate_badge_pdf(
+                                            student_name=st.session_state.username,
+                                            text_preview=query_text.strip()[:100]
+                                        )
+                                        st.download_button(
+                                            label="⬇️ Click to Save PDF",
+                                            data=badge_pdf.getvalue(),
+                                            file_name=f"originality_certificate_{st.session_state.username}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                            mime="application/pdf",
+                                            use_container_width=True
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Error generating PDF badge: {str(e)}")
+                        
+                        st.markdown("---")
                     else:
                         st.success(
                             f"Found **{len(results)}** potentially similar passages."
@@ -596,24 +658,6 @@ else:
             else:
                 faiss_index = None
                 registry = []
-    elif os.path.exists(_INDEX_PATH):
-    try:
-        ocr_language, ocr_dpi = normalize_ocr_settings(
-            language=ocr_language,
-            dpi=ocr_dpi,
-        )
-    except ValueError as exc:
-        st.error(f"Invalid OCR configuration: {exc}")
-        st.stop()
-
-    # Load or initialize FAISS index
-    if os.path.exists(_INDEX_PATH):
-        faiss_index = load_index(_INDEX_PATH)
-        registry = get_chunk_registry()
-        st.info(f"📂 Loaded existing FAISS index from disk with {faiss_index.ntotal} vectors")
-    else:
-        faiss_index = None
-        registry = []
 
     if "analysis_results" not in st.session_state:
         st.session_state.analysis_results = None
@@ -1052,39 +1096,12 @@ else:
             chunks = chunked_docs_new.get(doc_name, [])
             if emb.ndim != 2 or emb.shape[0] == 0:
                 continue
-
-    else:
-        (
-            raw_texts,
-            chunked_docs,
-            embeddings,
-            sim_df,
-            chunk_sim_df,
-            faiss_index,
-            registry,
-            ai_probabilities,
-        ) = st.session_state.analysis_results
             start_id = len(
                 [record for record in registry if record.doc_name != doc_name]
             )
             chunks_to_add = []
-
-    # Optional explicit reset. Normal widget changes must never clear analysis.
-    if st.button(
-        "🗑️ Clear current analysis",
-        key="clear_current_analysis",
-        help="Clear the current upload analysis and start with a new set of files.",
-    ):
-        st.session_state.analysis_results = None
-        st.session_state.analysis_file_signature = None
-        # Clear Redis cache for analysis results
-        get_cache().delete(f"analysis:{SESSION_ID}:current")
-        get_cache().delete(f"session:{SESSION_ID}:analysis_file_signature")
-        run_pipeline.clear()
-        st.rerun()
             for i, (vec, chunk_text) in enumerate(zip(emb, chunks)):
                 chunks_to_add.append((start_id + i, doc_name, i, chunk_text, vec))
-
             add_chunks(chunks_to_add)
     # If we have an existing index but no new files, load existing data
     if faiss_index is not None and not new_files:
@@ -1193,15 +1210,6 @@ else:
         ai_scores = [ai_probabilities.get(doc, {}).get('overall', 0.0) for doc in doc_names]
         avg_ai_prob = np.mean(ai_scores) if ai_scores else 0.0
 
-    col1.metric("📄 Documents",   n_docs)
-    col2.metric("🔗 Pairs",       total_pairs)
-    col3.metric("🚨 Flagged",     n_flagged,
-                delta=f"{n_high} High" if n_high else None, delta_color="inverse")
-    col4.metric("📈 Avg Similarity", f"{avg_sim:.1%}")
-    col5.metric("🤖 Avg AI Prob", f"{avg_ai_prob:.1%}")
-    col6.metric(
-        "🗂️ FAISS Vectors",
-        faiss_index.ntotal if faiss_index is not None else 0,
     col1.metric("📄 Documents", n_docs)
     col2.metric("🔗 Pairs", total_pairs)
     col3.metric(
@@ -1211,7 +1219,11 @@ else:
         delta_color="inverse",
     )
     col4.metric("📈 Avg Similarity", f"{avg_sim:.1%}")
-    col5.metric("🗂️ FAISS Vectors", faiss_index.ntotal)
+    col5.metric("🤖 Avg AI Prob", f"{avg_ai_prob:.1%}")
+    col6.metric(
+        "🗂️ FAISS Vectors",
+        faiss_index.ntotal if faiss_index is not None else 0,
+    )
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────

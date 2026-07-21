@@ -4,7 +4,6 @@ test_ai_detector.py
 Tests for AI-generated text detection functionality.
 """
 
-import pytest
 from src.core.ai_detector import (
     detect_ai_probability,
     detect_ai_probability_batch,

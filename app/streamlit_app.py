@@ -115,6 +115,9 @@ from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 from src.visualization.network_graph import plot_similarity_network
 from src.utils.excel_export import export_similarity_matrix_to_excel
 
+
+from src.utils.excel_export import export_similarity_matrix_to_excel
+
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
     from src.utils.json_export import export_similarity_matrix_to_json
@@ -154,7 +157,7 @@ from src.db.auth import (
 
 try:
     from streamlit_tour import Tour
-except ImportError:
+except Exception:
     Tour = None
 
 # Initialize auth database

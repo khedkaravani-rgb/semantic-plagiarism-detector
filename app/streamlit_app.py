@@ -115,11 +115,21 @@ with st.sidebar:
     if user_role == "admin":
         threshold = st.slider("Plagiarism Threshold", 0.50, 0.99,
                               value=PLAGIARISM_THRESHOLD, step=0.01,
+                              key="threshold_settings_slider",
                               help="Cosine similarity above which a pair is flagged. (Recommended: 0.59 based on benchmark evaluation)")
         use_chunk_matrix = st.checkbox("Use chunk-level similarity matrix", value=False,
+                                       key="use_chunk_matrix_settings_checkbox",
                                        help="Use MAX chunk-pair similarity instead of mean doc vectors.")
         faiss_top_k = st.slider("FAISS: matches per chunk", 1, 20, value=5,
+                                key="faiss_top_k_settings_slider",
                                 help="Nearest neighbours per chunk in FAISS search.")
+        
+        if st.button("🔄 Reset to Factory Defaults", key="reset_defaults_button", use_container_width=True):
+            for key in ["threshold_settings_slider", "use_chunk_matrix_settings_checkbox", "faiss_top_k_settings_slider"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.success("Settings reset to defaults!")
+            st.rerun()
     else:
         # Fallbacks for Standard Users (Cannot alter thresholds or configs)
         threshold = PLAGIARISM_THRESHOLD

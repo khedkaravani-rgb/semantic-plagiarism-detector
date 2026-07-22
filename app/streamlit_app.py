@@ -73,10 +73,7 @@ from src.utils.redis_cache import (
 from src.utils.warning_list import render_warning_controls
 from src.visualization.heatmap import plot_similarity_heatmap
 
-try:
-    from src.utils.excel_export import export_similarity_matrix_to_excel
-except ImportError:
-    from utils.excel_export import export_similarity_matrix_to_excel
+from src.utils.excel_export import export_similarity_matrix_to_excel
 
 # Initialize corpus database
 init_corpus_db()
@@ -217,7 +214,6 @@ with theme_col:
 
 
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
-# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
 
@@ -232,7 +228,18 @@ with st.sidebar:
         set_theme(selected_theme)
         st.rerun()
 
+    # 🎨 Color Map Selection Dropdown (#186)
+    st.markdown("---")
+    st.subheader("🎨 Heatmap Color Map")
+    heatmap_cmap = st.selectbox(
+        "Select Color Scale",
+        options=["OrRd", "viridis", "plasma", "magma", "cividis", "coolwarm", "YlGnBu"],
+        index=0,
+        key="heatmap_cmap_selector",
+    )
+
     if user_role == "admin":
+        st.markdown("---")
         threshold = st.slider(
             "Plagiarism Threshold",
             0.50,
@@ -254,7 +261,7 @@ with st.sidebar:
             key="faiss_top_k_slider",
         )
 
-        # ── Customizable Chunk Size & Overlap Sliders (#153) ─────────────────
+        # ── Customizable Chunk Size & Overlap Sliders ─────────────────
         st.markdown("### ✂️ Chunking Settings")
         chunk_size = st.slider(
             "Chunk Size (characters)",
@@ -311,9 +318,11 @@ with st.sidebar:
         ocr_language = DEFAULT_OCR_LANGUAGE
         ocr_dpi = DEFAULT_OCR_DPI
 
+    st.markdown("---")
     unique_classes = ["All Classes"] + get_unique_class_sections()
 
     selected_class = st.selectbox("Select Class/Section", unique_classes, index=0)
+
 
 # ── Main Header ───────────────────────────────────────────────────────────────
 st.title("🔍 Semantic Plagiarism Detection System")
@@ -469,7 +478,7 @@ else:
         key="admin_file_uploader",
     )
 
-    # 2. GOOGLE DRIVE IMPORT SECTION (#146)
+    # 2. GOOGLE DRIVE IMPORT SECTION
     from src.utils.google_drive import bulk_download_drive_folder
 
     if "drive_files_dict" not in st.session_state:
@@ -745,33 +754,45 @@ else:
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
         st.subheader("⚡ FAISS Vector Search")
-        st.info(f"Index total: {faiss_index.ntotal} vectors.")
+
+        if faiss_index is not None:
+            st.info(f"Index total: {faiss_index.ntotal} vectors.")
+        else:
+            st.warning("FAISS index is not initialized.")
 
         faiss_query = st.text_input(
             "Query FAISS Index:",
             placeholder="Type a text snippet to search vector index...",
             key="faiss_query_input",
         )
+
         if st.button("🔍 Run FAISS Search", key="run_faiss_search_btn"):
             if faiss_query.strip() and faiss_index is not None:
-                from src.core.embedding_model import embed_chunks
+                try:
+                    from src.core.embeddings import generate_embeddings  # type: ignore
+                    from src.core.faiss_indexer import search_similar_chunks  # type: ignore
 
-                q_vec = embed_chunks([faiss_query.strip()])[0]
-                q_results = search_similar_chunks(
-                    q_vec,
-                    faiss_index,
-                    registry,
-                    top_k=faiss_top_k,
-                    threshold=threshold,
-                )
-                if q_results:
-                    for rec, score in q_results:
-                        st.markdown(
-                            f"**{rec.doc_name}** (Chunk #{rec.chunk_index}) — Similarity: `{score:.1%}`"
-                        )
-                        st.caption(rec.chunk_text)
-                else:
-                    st.info("No matching vector chunks found above threshold.")
+                    q_vec = generate_embeddings([faiss_query.strip()])[0]
+                    q_results = search_similar_chunks(
+                        q_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k if "faiss_top_k" in locals() else 5,
+                        threshold=threshold,
+                    )
+
+                    if q_results:
+                        for rec, score in q_results:
+                            st.markdown(
+                                f"**{rec.doc_name}** (Chunk #{rec.chunk_index}) — Similarity: `{score:.1%}`"
+                            )
+                            st.caption(rec.chunk_text)
+                    else:
+                        st.info("No matching vector chunks found above threshold.")
+                except Exception as err:
+                    st.error(f"FAISS search error: {err}")
+            else:
+                st.warning("Please enter a valid query string.")
 
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
@@ -787,17 +808,11 @@ else:
                 unsafe_allow_html=True,
             )
         else:
-
-            def _highlight(val: Any) -> str:
-                numeric_val = float(val)
-                if numeric_val >= 0.90:
-                    return "background-color:#ff4b4b;color:white;font-weight:bold;"
-                elif numeric_val >= threshold:
-                    return "background-color:#ffa500;color:white;font-weight:bold;"
-                return ""
-
-            styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
-            st.dataframe(styled_df, use_container_width=True)
+            # Apply chosen colormap to matrix styling (#186)
+            st.dataframe(
+                active_sim_df.style.background_gradient(cmap=heatmap_cmap).format("{:.4f}"),
+                use_container_width=True,
+            )
 
             # Export options row
             col_csv, col_excel = st.columns(2)
@@ -831,10 +846,11 @@ else:
             title="Document Semantic Similarity",
             threshold=threshold,
             theme_colors=get_colors(),
+            cmap=heatmap_cmap,  # Dynamic colormap support (#186)
         )
         st.pyplot(heatmap_fig, use_container_width=True)
 
-    # ══ TAB 5: PAIR DRILL-DOWN (#145 Feature Included) ════════════════════════
+    # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
     with tab_drill:
         st.subheader("🔬 Pair Drill-Down")
         c1, c2 = st.columns(2)
@@ -871,7 +887,7 @@ else:
                     st.write(f"**{doc_a}:** {ca}")
                     st.write(f"**{doc_b}:** {cb}")
 
-        # --- In-App PDF Preview with Highlighted Matches (#145) ---
+        # --- In-App PDF Preview with Highlighted Matches ---
         with drill_tab_viewer:
             st.subheader("📄 In-App PDF Preview with Highlighted Matches")
             selected_view_doc = st.radio(

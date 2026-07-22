@@ -38,8 +38,6 @@ from src.core.document_parser import (
     SUPPORTED_OCR_LANGUAGES,
     OCRDependencyError,
     extract_text,
-    get_faiss_index,
-    get_session_state,
     prepare_text_for_embedding,
     remove_ignore_phrases,
 )
@@ -100,6 +98,8 @@ from src.utils.redis_cache import (
     cache_session_state,
     clear_session,
     get_analysis_results,
+    get_faiss_index,
+    get_session_state,
     get_upload_count,
     increment_upload_count,
     is_upload_rate_limited,

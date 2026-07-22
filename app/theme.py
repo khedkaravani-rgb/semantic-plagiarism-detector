@@ -1,5 +1,7 @@
 import streamlit as st
 
+from src.core.config import DEFAULT_THRESHOLDS, normalize_severity_label, severity_key
+
 THEMES = {
     "Light": {
         "background": "#FFFFFF",
@@ -419,6 +421,19 @@ def inject_css() -> None:
             border-color: var(--border) !important;
         }}
 
+        .clear-all-container button {{
+            background-color: var(--danger) !important;
+            color: white !important;
+            border-color: var(--danger) !important;
+            font-weight: 600 !important;
+        }}
+
+        .clear-all-container button:hover {{
+            background-color: #ff3333 !important;
+            color: white !important;
+            border-color: #ff3333 !important;
+        }}
+
         [data-testid="stExpander"],
         [data-testid="stForm"] {{
             background-color: var(--card) !important;
@@ -568,14 +583,11 @@ def inject_css() -> None:
 # ── Severity helpers ──────────────────────────────────────────────────────────
 
 
-def severity_tier(score: float, threshold: float) -> str:
-    """
-    Categorizes the score into a severity tier matching the backend.
-
-    High: >= 0.90
-    Medium: >= threshold
-    Low: < threshold
-    """
+def severity_tier(
+    score: float,
+    threshold: float = DEFAULT_THRESHOLDS.plagiarism,
+) -> str:
+    """Return the severity tier based on score and threshold."""
     if score >= 0.90:
         return "high"
     elif score >= threshold:
@@ -585,13 +597,10 @@ def severity_tier(score: float, threshold: float) -> str:
 
 
 def tier_from_severity_label(label: str) -> str:
-    """Maps existing label string to tier key."""
-    clean = label.lower()
-    if "high" in clean:
-        return "high"
-    elif "medium" in clean or "warn" in clean:
-        return "medium"
-    else:
+    """Map canonical or legacy severity labels to a lowercase tier."""
+    try:
+        return normalize_severity_label(label).lower()
+    except ValueError:
         return "low"
 
 
@@ -628,15 +637,22 @@ def badge_html(tier: str, label: str = None) -> str:
 # ── UI helpers ────────────────────────────────────────────────────────────────
 
 
-def format_similarity_html(score: float, threshold: float = 0.59) -> str:
-    """Return a themed similarity pill for use with st.markdown(unsafe_allow_html=True)."""
+def format_similarity_html(
+    score: float,
+    threshold: float = DEFAULT_THRESHOLDS.plagiarism,
+) -> str:
+    """Return a themed similarity pill using central severity boundaries."""
+    del threshold
     colors = get_colors()
-    if score >= 0.90:
+    tier = severity_key(score)
+
+    if tier == "high":
         bg = colors["danger"]
-    elif score >= threshold:
+    elif tier == "medium":
         bg = colors["warning"]
     else:
         bg = colors["success"]
+
     return (
         f'<span class="sim-pill" style="background:{bg};">'
         f"Similarity: {score * 100:.1f}%</span>"

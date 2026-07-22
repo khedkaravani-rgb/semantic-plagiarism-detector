@@ -139,6 +139,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+pip install pytest-cov  # Required for coverage reporting
 ```
 
 > **Note:** The first run will download the `paraphrase-multilingual-MiniLM-L12-v2` model (~420 MB).
@@ -445,6 +446,53 @@ detected by both, but the semantic model provides much stronger signal separatio
 The TF-IDF baseline relies on exact word overlap — it fails when students paraphrase.
 Sentence Transformers encode **meaning**, catching paraphrases that surface-level
 methods miss entirely.
+
+## Similarity threshold and severity configuration
+
+All plagiarism and severity boundaries are defined in
+`src/core/config.py`.
+
+| Rule | Default |
+|---|---:|
+| Pair is flagged as plagiarism | `>= 0.59` |
+| Medium severity | `>= 0.75` |
+| High severity | `>= 0.90` |
+
+The required ordering is:
+
+```text
+0.0 <= plagiarism <= medium <= high <= 1.0
+```
+
+The administrator slider controls which pairs are flagged. It does not redefine
+the Medium or High severity bands.
+
+Scores outside `[0.0, 1.0]` are clamped for consistent presentation. Invalid
+non-numeric, NaN, or infinite values are rejected.
+
+
+## Versioned SQLite schema migrations
+
+`users.db` and `corpus.db` are upgraded automatically using SQLite
+`PRAGMA user_version`.
+
+Migration definitions live in:
+
+```text
+src/db/migrations/auth.py
+src/db/migrations/corpus.py
+src/db/migrations/common.py
+```
+
+Each upgrade:
+
+1. reads the current schema version,
+2. applies every missing migration in order,
+3. runs inside a rollback-safe savepoint,
+4. updates `PRAGMA user_version` only after all migrations succeed,
+5. preserves existing users, documents, chunks, embeddings, and incidents.
+
+Existing database files should not be deleted during an application upgrade.
 
 ---
 

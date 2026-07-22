@@ -3,7 +3,6 @@ import shutil
 from unittest.mock import MagicMock, patch
 
 import docx
-import pytest
 
 from src.core.document_parser import (
     extract_text,

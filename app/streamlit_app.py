@@ -23,8 +23,6 @@ from typing import Any
 
 from sklearn.metrics.pairwise import cosine_similarity
 
-import hashlib
-
 from app.theme import (
     empty_state_html,
     get_colors,
@@ -33,16 +31,20 @@ from app.theme import (
     set_theme,
 )
 from src.core.ai_detector import detect_documents_ai_probability
+from src.core.config import DEFAULT_THRESHOLDS, severity_key
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     SUPPORTED_OCR_LANGUAGES,
+    OCRDependencyError,
     extract_text,
+    get_faiss_index,
+    get_session_state,
     prepare_text_for_embedding,
+    remove_ignore_phrases,
 )
 from src.core.embedding_model import embed_documents
 from src.core.faiss_index import (
-    ChunkRecord,
     build_index,
     build_index_from_matrix,
     load_index,
@@ -57,27 +59,27 @@ from src.core.similarity import (
 )
 from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
+
+
+class OCRFileBatchError(Exception):
+    """Exception raised when OCR extraction fails on one or more files in a batch."""
+
+    def __init__(self, failed_files: list[str], failure_details: list[str]):
+        self.failed_files = failed_files
+        self.failure_details = failure_details
+        super().__init__(f"OCR failed for files: {failed_files}")
+
+
 from src.db import (
-    add_chunks,
-    add_document,
     clear_all_data,
     delete_document,
     get_all_documents,
     get_all_embeddings,
     get_chunk_registry,
-    get_document_by_hash,
     get_documents_by_class,
     get_unique_class_sections,
     init_corpus_db,
 )
-from src.db.incidents import (  # noqa: E402
-    get_high_severity_trends,
-    get_most_plagiarized_documents,
-)
-from src.utils.pdf_report import generate_plagiarism_report  # noqa: E402
-from src.utils.badge_generator import (  # noqa: E402
-    generate_badge_png,
-    generate_badge_pdf,
 from src.db.auth import (
     disable_2fa,
     enable_2fa,
@@ -89,39 +91,25 @@ from src.db.auth import (
     set_tour_completed,
     verify_user,
 )
-from src.utils.pdf_report import generate_plagiarism_report, highlight_pdf_matches
+from src.db.incidents import (  # noqa: E402
+    get_high_severity_trends,
+    get_most_plagiarized_documents,
+)
+from src.utils.pdf_report import highlight_pdf_matches  # noqa: E402
 from src.utils.redis_cache import (
     cache_session_state,
     clear_session,
     get_analysis_results,
-    get_cache,
-    is_upload_rate_limited,
-    increment_upload_count,
     get_upload_count,
+    increment_upload_count,
+    is_upload_rate_limited,
 )
-from src.visualization.heatmap import (  # noqa: E402
-    plot_chunk_similarity_comparison,
-    plot_similarity_heatmap,
-)
+from src.utils.warning_list import render_warning_controls
 from src.visualization.analytics import (  # noqa: E402
     plot_high_severity_trends,
     plot_most_plagiarized_documents,
 )
-from src.core.document_parser import (
-    DEFAULT_OCR_DPI,
-    DEFAULT_OCR_LANGUAGE,
-    OCRDependencyError,
-    SUPPORTED_OCR_LANGUAGES,
-    extract_text,
-    normalize_ocr_settings,
-    prepare_text_for_embedding,
-    extract_pdf_metadata,
-    remove_ignore_phrases,
-    get_faiss_index,
-    get_session_state,
-)
-from src.utils.warning_list import render_warning_controls
-from src.visualization.heatmap import plot_similarity_heatmap
+from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 from src.visualization.network_graph import plot_similarity_network
 
 try:
@@ -152,22 +140,14 @@ _BRANDING_LOGO_PATH = os.path.abspath(
 _INDEX_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "corpus.index")
 )
-from src.utils.pdf_report import generate_plagiarism_report
-from src.db.auth import (
-    init_db,
-    verify_user,
-    get_user_role,
-    add_user,
-    get_all_users,
-    delete_user,
-    update_password,
-    get_tour_completed,
-    set_tour_completed,
-    check_login_rate_limit,
-    record_failed_login,
-    clear_login_attempts,
-)
 from streamlit_tour import Tour
+
+from src.db.auth import (
+    check_login_rate_limit,
+    clear_login_attempts,
+    record_failed_login,
+)
+
 try:
     from streamlit_tour import Tour
 except ImportError:
@@ -218,6 +198,7 @@ if last_interaction and st.session_state.get("authenticated", False):
                 del st.session_state[key]
         clear_session(SESSION_ID)
         from src.errors import UI_SESSION_EXPIRED
+
         st.warning(UI_SESSION_EXPIRED)
         st.stop()
     else:
@@ -290,9 +271,11 @@ if not st.session_state.get("authenticated", False):
 
         if login_submitted:
             username = username.strip().lower()
-            
+
             if not username or not password:
-                st.error("Please enter both username and password.")
+                from src.errors import AUTH_BLANK_CREDENTIALS
+
+                st.error(AUTH_BLANK_CREDENTIALS)
             else:
                 # Check rate limit before attempting authentication
                 is_allowed, error_msg = check_login_rate_limit(username)
@@ -300,53 +283,41 @@ if not st.session_state.get("authenticated", False):
                     st.error(error_msg)
                 elif verify_user(username, password):
                     role = get_user_role(username)
-                    st.session_state.authenticated = True
-                    st.session_state.role = role
-                    st.session_state.username = username
-                    st.session_state.last_interaction = time.time()
-                    # Clear failed login attempts on successful login
-                    clear_login_attempts(username)
-                    # Cache session state in Redis
-                    cache_session_state(SESSION_ID, "authenticated", True)
-                    cache_session_state(SESSION_ID, "role", role)
-                    cache_session_state(SESSION_ID, "username", username)
-                    cache_session_state(SESSION_ID, "last_interaction", time.time())
-                    st.success(f"Welcome back, {role.capitalize()}!")
-                    st.rerun()
+                    if role is None:
+                        from src.errors import AUTH_ROLE_UNDETERMINED
+
+                        st.error(AUTH_ROLE_UNDETERMINED)
+                    else:
+                        # Clear failed login attempts on successful login
+                        clear_login_attempts(username)
+
+                        # Check if 2FA is enabled for this user
+                        enabled, _ = get_2fa_status(username)
+                        if enabled:
+                            st.session_state.pending_2fa = True
+                            st.session_state.pending_username = username
+                            st.session_state.pending_role = role
+                            st.rerun()
+                        else:
+                            st.session_state.authenticated = True
+                            st.session_state.username = username
+                            st.session_state.role = role
+                            st.session_state.last_interaction = time.time()
+                            cache_session_state(SESSION_ID, "authenticated", True)
+                            cache_session_state(SESSION_ID, "username", username)
+                            cache_session_state(SESSION_ID, "role", role)
+                            cache_session_state(
+                                SESSION_ID, "last_interaction", time.time()
+                            )
+
+                            st.success(f"Welcome back, {role.capitalize()}!")
+                            st.rerun()
                 else:
                     # Record failed login attempt
                     record_failed_login(username)
-                    st.error("Invalid username or password.")
-                from src.errors import AUTH_BLANK_CREDENTIALS
-                st.error(AUTH_BLANK_CREDENTIALS)
-            elif verify_user(username, password):
-                role = get_user_role(username)
-                if role is None:
-                    from src.errors import AUTH_ROLE_UNDETERMINED
-                    st.error(AUTH_ROLE_UNDETERMINED)
-                else:
-                    # Check if 2FA is enabled for this user
-                    enabled, _ = get_2fa_status(username)
-                    if enabled:
-                        st.session_state.pending_2fa = True
-                        st.session_state.pending_username = username
-                        st.session_state.pending_role = role
-                        st.rerun()
-                    else:
-                        st.session_state.authenticated = True
-                        st.session_state.username = username
-                        st.session_state.role = role
-                        st.session_state.last_interaction = time.time()
-                        cache_session_state(SESSION_ID, "authenticated", True)
-                        cache_session_state(SESSION_ID, "username", username)
-                        cache_session_state(SESSION_ID, "role", role)
-                        cache_session_state(SESSION_ID, "last_interaction", time.time())
+                    from src.errors import AUTH_INVALID_CREDENTIALS
 
-                        st.success(f"Welcome back, {username}!")
-                        st.rerun()
-            else:
-                from src.errors import AUTH_INVALID_CREDENTIALS
-                st.error(AUTH_INVALID_CREDENTIALS)
+                    st.error(AUTH_INVALID_CREDENTIALS)
     st.stop()
 
 
@@ -426,6 +397,9 @@ with theme_col:
 
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+unique_classes = ["All Classes"] + get_unique_class_sections()
+selected_class = "All Classes"
+
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
 
@@ -453,6 +427,11 @@ with st.sidebar:
                 f"{DEFAULT_THRESHOLDS.high:.0%}."
             ),
             key="threshold_slider",
+        )
+        selected_class = st.selectbox(
+            "Filter by Class Section",
+            options=unique_classes,
+            key="class_filter_selectbox",
         )
         use_chunk_matrix = st.checkbox(
             "Use chunk-level similarity matrix",
@@ -568,71 +547,95 @@ with st.sidebar:
 if user_role != "admin":
     # STANDARD USER VIEW: Student Query / Search Panel Only (No admin PDF uploading)
     st.subheader("🔎 Secure Student Search Portal")
-    st.caption("Paste a text snippet below to check its similarity against existing indexed assignments.")
-    
-    st.info("🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access. Your queries are anonymized for privacy.")
-    
-    query_text = st.text_area("Paste a text snippet to check against index:", height=150,
-                              placeholder="Paste a paragraph here to check for plagiarism...")
-    
+    st.caption(
+        "Paste a text snippet below to check its similarity against existing indexed assignments."
+    )
+
+    st.info(
+        "🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access. Your queries are anonymized for privacy."
+    )
+
+    query_text = st.text_area(
+        "Paste a text snippet to check against index:",
+        height=150,
+        placeholder="Paste a paragraph here to check for plagiarism...",
+    )
+
     if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
         # Load existing index and registry from database
-        from src.db.corpus_db import get_chunk_registry, get_all_embeddings
         from src.core.faiss_index import build_index_from_matrix
-        
+        from src.db.corpus_db import get_all_embeddings, get_chunk_registry
+
         with st.spinner("Loading index and searching..."):
             try:
                 registry = get_chunk_registry()
                 embeddings_matrix = get_all_embeddings()
-                
+
                 if embeddings_matrix.shape[0] == 0:
                     from src.errors import UI_NO_DOCUMENTS_INDEXED
+
                     st.warning(UI_NO_DOCUMENTS_INDEXED)
                 else:
                     # Build index from stored embeddings
-                    faiss_index = build_index_from_matrix(embeddings_matrix, index_type="auto")
-                    
+                    faiss_index = build_index_from_matrix(
+                        embeddings_matrix, index_type="auto"
+                    )
+
                     # Embed the query
                     from src.core.embedding_model import embed_chunks
+
                     query_vec = embed_chunks([query_text.strip()])[0]
-                    
+
                     # Search with threshold
                     faiss_threshold = threshold
-                    results = search_similar_chunks(query_vec, faiss_index, registry,
-                                                      top_k=faiss_top_k, threshold=faiss_threshold)
-                    
+                    results = search_similar_chunks(
+                        query_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k,
+                        threshold=faiss_threshold,
+                    )
+
                     if not results:
-                        st.success("✅ No significant matches found in the assignment database.")
+                        st.success(
+                            "✅ No significant matches found in the assignment database."
+                        )
                     else:
-                        st.success(f"Found **{len(results)}** potentially similar passages.")
-                        
+                        st.success(
+                            f"Found **{len(results)}** potentially similar passages."
+                        )
+
                         # Anonymize document names
                         doc_id_map = {}
                         anon_counter = 1
-                        
+
                         for record, score in results:
                             if record.doc_name not in doc_id_map:
-                                doc_id_map[record.doc_name] = f"Document-{anon_counter:03d}"
+                                doc_id_map[record.doc_name] = (
+                                    f"Document-{anon_counter:03d}"
+                                )
                                 anon_counter += 1
-                        
+
                         # Display anonymized results
                         for rank, (record, score) in enumerate(results, 1):
                             anon_doc_name = doc_id_map[record.doc_name]
                             color = "#ff4b4b" if score >= 0.90 else "#ffa500"
-                            
+
                             with st.expander(
                                 f"#{rank} · {anon_doc_name} (chunk #{record.chunk_index+1}) "
                                 f"— {score:.1%}",
-                                expanded=(rank == 1)
+                                expanded=(rank == 1),
                             ):
                                 cq, cm = st.columns(2)
                                 with cq:
                                     st.markdown("**Your query:**")
                                     st.info(query_text.strip())
                                 with cm:
-                                    st.markdown(f"**Matching passage in {anon_doc_name}:**")
+                                    st.markdown(
+                                        f"**Matching passage in {anon_doc_name}:**"
+                                    )
                                     st.warning(record.chunk_text)
-                                
+
                                 st.markdown(
                                     f"<div style='text-align:right;'>"
                                     f"<span style='background:{color};color:white;padding:3px 12px;"
@@ -640,16 +643,21 @@ if user_role != "admin":
                                     f"Similarity: {score*100:.1f}%</span></div>",
                                     unsafe_allow_html=True,
                                 )
-                        
-                        st.caption("🔒 Document names are anonymized to protect student privacy.")
-                        
+
+                        st.caption(
+                            "🔒 Document names are anonymized to protect student privacy."
+                        )
+
             except Exception as e:
                 from src.errors import UI_INDEX_LOAD_FAILED
+
                 st.error(UI_INDEX_LOAD_FAILED.format(error=str(e)))
-                st.info("Please ensure documents have been indexed by an administrator.")
+                st.info(
+                    "Please ensure documents have been indexed by an administrator."
+                )
 else:
     # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
-    
+
     # Load or initialize FAISS index
     if os.path.exists(_INDEX_PATH):
         faiss_index = load_index(_INDEX_PATH)
@@ -674,8 +682,6 @@ else:
         ocr_dpi = DEFAULT_OCR_DPI
         ignore_phrases = ""
         st.info("ℹ️ Settings configuration is restricted to Administrators.")
-
-    unique_classes = ["All Classes"] + get_unique_class_sections()
 
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if (
@@ -766,7 +772,9 @@ if user_role != "admin":
                     # Apply ignore phrases to query if configured
                     processed_query = query_text.strip()
                     if ignore_phrases and ignore_phrases.strip():
-                        processed_query = remove_ignore_phrases(processed_query, ignore_phrases)
+                        processed_query = remove_ignore_phrases(
+                            processed_query, ignore_phrases
+                        )
 
                     # Embed the query
                     from src.core.embedding_model import embed_chunks
@@ -881,7 +889,9 @@ else:
         username = st.session_state.get("username", "anonymous")
         if is_upload_rate_limited(username):
             current_count = get_upload_count(username)
-            st.error(f"Upload rate limit exceeded. Maximum 100 uploads per hour allowed. Current: {current_count}/100. Please try again later.")
+            st.error(
+                f"Upload rate limit exceeded. Maximum 100 uploads per hour allowed. Current: {current_count}/100. Please try again later."
+            )
             uploaded_files = None
         else:
             # Increment upload counter for each file
@@ -893,7 +903,7 @@ else:
         "Paste a direct URL (e.g., Wikipedia article, Medium blog post)",
         placeholder="https://example.com/article",
         key="url_input",
-        help="The system will fetch and extract text from the webpage for plagiarism detection."
+        help="The system will fetch and extract text from the webpage for plagiarism detection.",
     )
 
     file_bytes_dict = {
@@ -980,32 +990,40 @@ else:
     # Also allow URL input as an alternative to file uploads
     url_text = None
     url_filename = None
-    
+
     if url_input and url_input.strip():
         try:
             from src.core.document_parser import extract_text_from_url
+
             with st.spinner("🔍 Fetching and extracting text from URL..."):
                 url_text = extract_text_from_url(url_input.strip())
                 if not url_text or len(url_text.strip()) < 50:
-                    st.warning("⚠️ The URL did not contain enough text content for analysis.")
+                    st.warning(
+                        "⚠️ The URL did not contain enough text content for analysis."
+                    )
                     url_text = None
                 else:
                     # Generate a filename from the URL
                     from urllib.parse import urlparse
+
                     parsed = urlparse(url_input.strip())
                     url_filename = f"webpage_{parsed.netloc.replace('.', '_')}.txt"
-                    st.success(f"✅ Successfully extracted {len(url_text)} characters from the webpage.")
+                    st.success(
+                        f"✅ Successfully extracted {len(url_text)} characters from the webpage."
+                    )
         except Exception as e:
             st.error(f"❌ Failed to fetch URL: {str(e)}")
             url_text = None
-    
+
     # Check if we have enough content (either files or URL)
     has_files = uploaded_files and len(uploaded_files) >= 2
     has_url = url_text is not None
-    
+
     if not has_files and not has_url:
         if st.session_state.analysis_results is None:
-            st.info("👆 Please upload **at least 2** PDF assignment files or paste a URL to begin.")
+            st.info(
+                "👆 Please upload **at least 2** PDF assignment files or paste a URL to begin."
+            )
             st.stop()
         else:
             st.success(
@@ -1021,6 +1039,7 @@ else:
             # We'll need to handle this case differently for the analysis
             st.warning(
                 "⚠️ Full similarity matrix requires re-uploading files. FAISS search is available with existing index."
+            )
     if st.session_state.drive_files_dict:
         file_bytes_dict.update(st.session_state.drive_files_dict)
 
@@ -1087,7 +1106,7 @@ else:
                 "class_section": class_section.strip(),
                 "assignment_title": assignment_title.strip(),
             }
-    
+
     # Add metadata for URL input if provided
     if url_filename:
         with st.expander(f"🔗 {url_filename}", expanded=True):
@@ -1097,7 +1116,9 @@ else:
                 key=f"student_{url_filename}",
             )
             class_section = st.text_input(
-                f"Class/Section for {url_filename}", value=batch_class, key=f"class_{url_filename}"
+                f"Class/Section for {url_filename}",
+                value=batch_class,
+                key=f"class_{url_filename}",
             )
             assignment_title = st.text_input(
                 f"Assignment Title for {url_filename}",
@@ -1123,6 +1144,8 @@ else:
         url_filename: str = None,
     ):
         raw_texts = {}
+        failed_files = []
+        failure_details = []
         for name, data in file_bytes_dict.items():
             try:
                 raw_texts[name] = extract_text(
@@ -1149,7 +1172,7 @@ else:
                 for name, text in raw_texts.items()
             }
 
-        # Original chunks are preserved for UI display.
+            # Original chunks are preserved for UI display.
             raw_texts[name] = extract_text(
                 _io.BytesIO(data),
                 name,
@@ -1202,8 +1225,16 @@ else:
             ai_probabilities,
         )
 
-    with st.spinner("🧠 Processing files and building embeddings…"):
-        analysis_results = run_pipeline(file_bytes_dict, ocr_language, ocr_dpi)
+    try:
+        with st.spinner("🧠 Processing files and building embeddings…"):
+            analysis_results = run_pipeline(file_bytes_dict, ocr_language, ocr_dpi)
+    except OCRFileBatchError as exc:
+        from src.errors import OCR_DEPENDENCIES_MISSING
+
+        st.error(OCR_DEPENDENCIES_MISSING)
+        if exc.failed_files:
+            st.warning(f"Failed files: {', '.join(exc.failed_files)}")
+        st.stop()
 
     (
         raw_texts,
@@ -1265,9 +1296,15 @@ else:
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_analytics, tab_users = st.tabs(
-    # ── Application Tabs ──────────────────────────────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
+    (
+        tab_warnings,
+        tab_faiss,
+        tab_matrix,
+        tab_heatmap,
+        tab_drill,
+        tab_analytics,
+        tab_users,
+    ) = st.tabs(
         [
             "⚠️ Plagiarism Warnings",
             "⚡ FAISS Chunk Search",
@@ -1323,21 +1360,16 @@ else:
         st.subheader("📋 Similarity Matrix")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
+
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
         else:
 
             def _highlight(val: Any) -> str:
                 tier = severity_key(float(val))
                 if tier == "high":
-                    return (
-                        "background-color:#ff4b4b;color:white;"
-                        "font-weight:bold;"
-                    )
+                    return "background-color:#ff4b4b;color:white;" "font-weight:bold;"
                 if tier == "medium":
-                    return (
-                        "background-color:#ffa500;color:white;"
-                        "font-weight:bold;"
-                    )
+                    return "background-color:#ffa500;color:white;" "font-weight:bold;"
                 return ""
 
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
@@ -1385,6 +1417,7 @@ else:
         st.subheader("🗺️ Similarity Heatmap")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
+
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
         else:
             heatmap_fig = plot_similarity_heatmap(
@@ -1445,9 +1478,11 @@ else:
         st.caption("Inspect chunk-level similarity between any two documents.")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
+
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
         elif len(active_sim_df) < 2:
             from src.errors import UI_NEED_MIN_DOCUMENTS
+
             st.warning(UI_NEED_MIN_DOCUMENTS)
         else:
             c1, c2 = st.columns(2)
@@ -1455,7 +1490,10 @@ else:
                 doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
             with c2:
                 doc_b = st.selectbox(
-                    "Document B", [d for d in doc_names if d != doc_a], index=0, key="db"
+                    "Document B",
+                    [d for d in doc_names if d != doc_a],
+                    index=0,
+                    key="db",
                 )
 
         score = float(active_sim_df.loc[doc_a, doc_b])
@@ -1531,40 +1569,44 @@ else:
         st.caption(
             "Track plagiarism trends and identify frequently plagiarized documents across all classes."
         )
-        
+
         # Sync current flags to incidents database before displaying analytics
         if flags:
             from src.db.incidents import sync_flagged_incidents
+
             sync_flagged_incidents(flags)
-        
+
         st.divider()
-        
+
         # High Severity Trends Chart
         st.subheader("📈 High Severity Plagiarism Trends (Last 30 Days)")
         trend_data = get_high_severity_trends(days=30)
         trend_fig = plot_high_severity_trends(trend_data)
         st.plotly_chart(trend_fig, use_container_width=True)
-        
+
         st.divider()
-        
+
         # Most Plagiarized Documents Chart
         st.subheader("🔝 Most Frequently Plagiarized Documents")
         doc_data = get_most_plagiarized_documents(limit=10)
         doc_fig = plot_most_plagiarized_documents(doc_data)
         st.plotly_chart(doc_fig, use_container_width=True)
-        
+
         st.divider()
-        
+
         # Summary statistics
         st.subheader("📋 Analytics Summary")
         if trend_data:
-            total_high_severity = sum(item['count'] for item in trend_data)
+            total_high_severity = sum(item["count"] for item in trend_data)
             st.metric("Total High Severity Incidents (30 days)", total_high_severity)
         else:
             st.info("No high severity incidents recorded in the last 30 days.")
-        
+
         if doc_data:
-            st.metric("Most Plagiarized Document", f"{doc_data[0]['document_name']} ({doc_data[0]['incident_count']} incidents)")
+            st.metric(
+                "Most Plagiarized Document",
+                f"{doc_data[0]['document_name']} ({doc_data[0]['incident_count']} incidents)",
+            )
         else:
             st.info("No plagiarism incidents recorded.")
 

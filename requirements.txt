@@ -6,6 +6,7 @@ sentence-transformers>=2.7.0     # Transformer embeddings (all-MiniLM-L6-v2)
 torch>=2.0.0                     # PyTorch backend for sentence-transformers
 transformers>=4.30.0             # HuggingFace transformers for AI detection
 langdetect>=1.0.9                # Language detection for cross-lingual NLP
+nltk>=3.8.0                      # Stop-word filtering for lexical fallback (#222)
 
 # ── PDF & Document Parsing ────────────────────────────────────────────────────
 pymupdf>=1.24.0                  # PyMuPDF for rendering & highlighting PDF matches

@@ -1,18 +1,19 @@
-import pytest
-import os
 import numpy as np
+import pytest
+
 from src.db.corpus_db import (
-    init_corpus_db,
-    add_document,
-    get_document_by_hash,
-    get_all_documents,
     add_chunks,
-    get_chunk_registry,
-    get_all_embeddings,
-    delete_document,
+    add_document,
     clear_all_data,
+    delete_document,
+    get_all_documents,
+    get_all_embeddings,
+    get_chunk_registry,
+    get_document_by_hash,
     get_document_chunks_count,
-    _DB_PATH
+    get_documents_by_class,
+    get_unique_class_sections,
+    init_corpus_db,
 )
 
 
@@ -43,37 +44,37 @@ def test_add_document_metadata():
 
 def test_get_document_by_hash():
     add_document("doc_alpha.txt", "hash_xyz_789")
-    
+
     match = get_document_by_hash("hash_xyz_789")
     assert match == "doc_alpha.txt"
-    
+
     no_match = get_document_by_hash("nonexistent_hash")
     assert no_match is None
 
 
 def test_add_and_retrieve_chunks():
     add_document("doc1.pdf", "hash_1")
-    
+
     # Format of chunk insertion tuples: (vector_id, filename, chunk_index, chunk_text, embedding)
     dummy_emb_1 = np.ones(384, dtype=np.float32) * 0.5
     dummy_emb_2 = np.ones(384, dtype=np.float32) * 1.5
-    
+
     chunks = [
         (0, "doc1.pdf", 0, "Paragraph 1 text", dummy_emb_1),
-        (1, "doc1.pdf", 1, "Paragraph 2 text", dummy_emb_2)
+        (1, "doc1.pdf", 1, "Paragraph 2 text", dummy_emb_2),
     ]
-    
+
     add_chunks(chunks)
-    
+
     # Check count
     assert get_document_chunks_count("doc1.pdf") == 2
-    
+
     # Check registry loading
     registry = get_chunk_registry()
     assert len(registry) == 2
     assert registry[0].doc_name == "doc1.pdf"
     assert registry[0].chunk_text == "Paragraph 1 text"
-    
+
     # Check embeddings extraction
     embs = get_all_embeddings()
     assert embs.shape == (2, 384)
@@ -84,27 +85,115 @@ def test_add_and_retrieve_chunks():
 def test_delete_document_cascades():
     add_document("doc1.pdf", "hash_1")
     add_document("doc2.pdf", "hash_2")
-    
+
     dummy_emb = np.zeros(384, dtype=np.float32)
-    
+
     chunks = [
         (0, "doc1.pdf", 0, "Paragraph 1", dummy_emb),
-        (1, "doc2.pdf", 0, "Paragraph 2", dummy_emb)
+        (1, "doc2.pdf", 0, "Paragraph 2", dummy_emb),
     ]
     add_chunks(chunks)
-    
+
     # Delete doc1
     delete_document("doc1.pdf")
-    
+
     # Check document counts
     all_docs = get_all_documents()
     assert len(all_docs) == 1
     assert all_docs[0]["filename"] == "doc2.pdf"
-    
+
     # Check that remaining chunks have compact vector_ids starting at 0
     registry = get_chunk_registry()
     assert len(registry) == 1
     assert registry[0].doc_name == "doc2.pdf"
-    
+
     embs = get_all_embeddings()
     assert embs.shape == (1, 384)
+
+
+def test_document_metadata_fields():
+    # Insert with metadata fields
+    res = add_document(
+        "metadata_test.pdf",
+        "hash_metadata_123",
+        class_section="Class B",
+        student_name="Alice Smith",
+        assignment_title="Homework 1",
+    )
+    assert res is True
+
+    # Retrieve and check fields
+    docs = get_all_documents()
+    assert len(docs) == 1
+    doc = docs[0]
+    assert doc["filename"] == "metadata_test.pdf"
+    assert doc["class_section"] == "Class B"
+    assert doc["student_name"] == "Alice Smith"
+    assert doc["assignment_title"] == "Homework 1"
+
+
+def test_class_queries():
+    # Add documents belonging to different classes
+    add_document(
+        "doc_a.pdf",
+        "hash_a",
+        class_section="Class A",
+        student_name="Student A",
+        assignment_title="Title A",
+    )
+    add_document(
+        "doc_b.pdf",
+        "hash_b",
+        class_section="Class B",
+        student_name="Student B",
+        assignment_title="Title B",
+    )
+    add_document(
+        "doc_c.pdf",
+        "hash_c",
+        class_section="Class A",
+        student_name="Student C",
+        assignment_title="Title C",
+    )
+    add_document("doc_empty.pdf", "hash_empty")  # No metadata class
+
+    # Verify unique class list
+    classes = get_unique_class_sections()
+    assert "Class A" in classes
+    assert "Class B" in classes
+    assert len(classes) == 2  # None or empty string shouldn't be included
+
+    # Verify getting documents by class
+    class_a_docs = get_documents_by_class("Class A")
+    assert "doc_a.pdf" in class_a_docs
+    assert "doc_c.pdf" in class_a_docs
+    assert len(class_a_docs) == 2
+
+    class_b_docs = get_documents_by_class("Class B")
+    assert "doc_b.pdf" in class_b_docs
+    assert len(class_b_docs) == 1
+
+
+def test_clear_all_data_clears_incidents():
+    from src.db.incidents import sync_flagged_incidents, get_all_incidents
+    
+    # 1. Add mock documents
+    add_document("doc1.pdf", "hash1")
+    add_document("doc2.pdf", "hash2")
+    
+    # 2. Add mock incidents
+    flags = [
+        {"doc_a": "doc1.pdf", "doc_b": "doc2.pdf", "similarity": 0.85, "severity": "High"}
+    ]
+    sync_flagged_incidents(flags)
+    
+    # Verify they exist
+    incidents = get_all_incidents()
+    assert len(incidents) == 1
+    
+    # 3. Clear all data
+    clear_all_data()
+    
+    # Verify everything is cleared
+    assert len(get_all_documents()) == 0
+    assert len(get_all_incidents()) == 0

@@ -29,6 +29,7 @@ from app.theme import (
     get_theme_name,
     inject_css,
     set_theme,
+    back_to_top_html,
 )
 from src.core.ai_detector import detect_documents_ai_probability
 from src.core.config import DEFAULT_THRESHOLDS, severity_key
@@ -163,6 +164,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.markdown(back_to_top_html(), unsafe_allow_html=True)
 inject_css()
 
 init_db()

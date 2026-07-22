@@ -85,49 +85,36 @@ similarity, and **FAISS vector search**.
 
 ```
 semantic_plagiarism_detector/
-│
-├── src/                      # Source package containing all components
-│   ├── __init__.py           # Exports backward-compatible unified public API
-│   │
-│   ├── core/                 # Core NLP and mathematical algorithms
-│   │   ├── __init__.py
-│   │   ├── document_parser.py# PDF, Word, and Text parser
-│   │   ├── text_chunking.py  # Paragraph segmenter
-│   │   ├── embedding_model.py# Sentence Transformer model loader
-│   │   ├── faiss_index.py    # Vector search indexing (Flat / IVF)
-│   │   ├── similarity.py     # Cosine similarity calculations
-│   │   └── translator.py     # Translation helper
-│   │
-│   ├── db/                   # Database systems
-│   │   ├── __init__.py
-│   │   ├── auth.py           # SQLite login database
-│   │   └── corpus_db.py      # SQLite corpus document & vector database
-│   │
-│   └── visualization/        # Charting & visualizations
-│       ├── __init__.py
-│       ├── heatmap.py        # Cosine similarity heatmaps
-│       └── network_graph.py  # Plagiarism connection networks
-│
-├── app/
-│   └── streamlit_app.py      # Streamlit Entry Dashboard
-│
-├── tests/                    # Reorganized unit testing suite
-│   ├── conftest.py           # Testing configuration/stubs
-│   ├── core/                 # Unit tests for NLP and indexing
-│   ├── db/                   # Unit tests for databases
-│   └── visualization/        # Unit tests for plots
-│
-├── users.db                  # SQLite user store (auto-created on first run)
-├── corpus.db                 # SQLite document store (auto-created on first run)
-│
-├── evaluation/
-│   ├── benchmark_dataset.json# 25 labelled text pairs
-│   ├── evaluate.py           # Precision/recall/F1 + ROC curves
-│   └── results/              # Generated plots & metrics (gitignored)
-│
-├── .gitignore
-├── requirements.txt
-└── README.md
+├── .github/                  # CI/CD workflows and issue templates
+│   ├── ISSUE_TEMPLATE/       # Bug report and feature request forms
+│   └── workflows/            # GitHub Actions CI and lint workflows
+├── app/                      # Streamlit application interface
+│   ├── components/           # Incident export and UI helper components
+│   ├── streamlit_app.py      # Main Streamlit dashboard entrypoint
+│   └── theme.py              # Visual design system and CSS injection
+├── src/                      # Core backend source package
+│   ├── core/                 # Parsing, chunking, embedding, FAISS & similarity
+│   ├── db/                   # SQLite authentication, corpus & incident databases
+│   ├── utils/                # PDF reports, warning lists, badges & caching
+│   └── visualization/        # Seaborn/Plotly heatmaps and network graphs
+├── tests/                    # Comprehensive unit and integration test suite
+│   ├── app/                  # UI and dashboard smoke tests
+│   ├── core/                 # Core NLP, translation, and indexing tests
+│   ├── db/                   # Database authentication and corpus tests
+│   ├── utils/                # PDF reports, email, and cache tests
+│   └── visualization/        # Network graph and heatmap tests
+├── docs/                     # Detailed setup guides and integration docs
+├── evaluation/               # Benchmark dataset and evaluation harness
+├── screenshots/              # Dashboard UI preview images
+├── CHANGELOG.md              # Version release history
+├── CODE_OF_CONDUCT.md        # Contributor Covenant v2.1
+├── CONTRIBUTING.md           # Developer setup and contribution guidelines
+├── LICENSE                   # MIT License
+├── README.md                 # Project documentation
+├── SECURITY.md               # Vulnerability reporting policy
+├── SUPPORT.md                # Help channels and FAQ
+├── pytest.ini                # Pytest configuration
+└── requirements.txt          # Python dependencies
 ```
 
 ---
@@ -152,6 +139,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+pip install pytest-cov  # Required for coverage reporting
 ```
 
 > **Note:** The first run will download the `paraphrase-multilingual-MiniLM-L12-v2` model (~420 MB).
@@ -172,6 +160,37 @@ The app opens at **http://localhost:8501**.
 | `admin` | `admin123` | Admin — full access + user management |
 
 Additional users can be created from the **User Management** page (admin only).
+
+---
+
+## ⚓ Pre-commit Hooks
+
+To maintain code quality and styling standards, we use client-side Git hooks managed by `pre-commit`. The hooks execute automatically before every commit to format and check code.
+
+### Installation
+
+1. Install the `pre-commit` utility:
+   ```bash
+   pip install pre-commit
+   ```
+
+2. Install the Git hooks:
+   ```bash
+   pre-commit install
+   ```
+
+After installation, the following checks run automatically on every staged file:
+- **`black`**: Formats Python code.
+- **`isort`**: Sorts import lines.
+- **`ruff`**: Checks for lint warnings and errors.
+- **`pre-commit-hooks`**: Performs basic validation (trailing whitespace, end-of-file fixer, check-yaml, check-added-large-files).
+
+### Run Hooks Manually
+
+You can manually trigger all hooks on all files in the repository at any time:
+```bash
+pre-commit run --all-files
+```
 
 ---
 
@@ -303,6 +322,64 @@ Results are **cached by Streamlit** — re-uploading the same files is instant.
 
 ---
 
+## 🌐 REST API for External LMS Integrations
+
+Expose a secure FastAPI endpoint for Learning Management Systems (Canvas, Moodle, Blackboard) to scan student submissions programmatically.
+
+### Start the REST API Server
+
+```bash
+uvicorn src.api.app:app --reload --port 8000
+```
+
+### Endpoints
+
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/health` | `GET` | None | API health and readiness check |
+| `/api/v1/scan` | `POST` | Bearer Token | Scan a document (`.pdf`, `.docx`, `.txt`) against the indexed corpus |
+
+### Example Request (`curl`)
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/scan?threshold=0.59" \
+  -H "Authorization: Bearer dev-bearer-token" \
+  -F "file=@student_essay.pdf"
+```
+
+### Example Response (`JSON`)
+
+```json
+{
+  "filename": "student_essay.pdf",
+  "word_count": 480,
+  "chunk_count": 5,
+  "plagiarism_flagged": true,
+  "threshold_used": 0.59,
+  "overall_document_similarity": 0.8523,
+  "max_chunk_similarity": 0.9125,
+  "matched_documents_count": 1,
+  "matched_documents": [
+    {
+      "filename": "course_source_material.pdf",
+      "document_similarity_score": 0.8523,
+      "max_chunk_similarity_score": 0.9125,
+      "severity": "🔴 High",
+      "flagged_chunks": [
+        {
+          "uploaded_chunk": "Artificial Intelligence is rapidly reshaping higher education...",
+          "matched_chunk": "AI models are transforming modern academic institutions...",
+          "similarity_score": 0.9125
+        }
+      ]
+    }
+  ]
+}
+```
+
+
+---
+
 ## 📦 Dependencies
 
 | Library | Purpose |
@@ -369,6 +446,29 @@ detected by both, but the semantic model provides much stronger signal separatio
 The TF-IDF baseline relies on exact word overlap — it fails when students paraphrase.
 Sentence Transformers encode **meaning**, catching paraphrases that surface-level
 methods miss entirely.
+
+## Similarity threshold and severity configuration
+
+All plagiarism and severity boundaries are defined in
+`src/core/config.py`.
+
+| Rule | Default |
+|---|---:|
+| Pair is flagged as plagiarism | `>= 0.59` |
+| Medium severity | `>= 0.75` |
+| High severity | `>= 0.90` |
+
+The required ordering is:
+
+```text
+0.0 <= plagiarism <= medium <= high <= 1.0
+```
+
+The administrator slider controls which pairs are flagged. It does not redefine
+the Medium or High severity bands.
+
+Scores outside `[0.0, 1.0]` are clamped for consistent presentation. Invalid
+non-numeric, NaN, or infinite values are rejected.
 
 ---
 

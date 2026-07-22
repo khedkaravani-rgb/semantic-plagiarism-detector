@@ -5,10 +5,11 @@ SQLite database manager to persist document metadata, chunk text, and embeddings
 Enables incremental updates and index rebuilding without re-embedding.
 """
 
-import sqlite3
 import os
-import numpy as np
+import sqlite3
 from datetime import datetime
+
+import numpy as np
 
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "corpus.db")
@@ -24,7 +25,8 @@ def _connect() -> sqlite3.Connection:
 def init_corpus_db() -> None:
     """Create the corpus and chunks tables if they do not exist."""
     with _connect() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS documents (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename         TEXT    UNIQUE NOT NULL,
@@ -37,7 +39,8 @@ def init_corpus_db() -> None:
                 pdf_creation_date TEXT,
                 pdf_title        TEXT
             )
-        """)
+        """
+        )
 
         # Schema migration fallback logic: add missing columns if documents table already existed
         cursor = conn.execute("PRAGMA table_info(documents)")
@@ -55,7 +58,8 @@ def init_corpus_db() -> None:
         if "pdf_title" not in columns:
             conn.execute("ALTER TABLE documents ADD COLUMN pdf_title TEXT")
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS chunks (
                 vector_id    INTEGER PRIMARY KEY,
                 filename     TEXT    NOT NULL,
@@ -64,7 +68,8 @@ def init_corpus_db() -> None:
                 embedding    BLOB    NOT NULL,
                 FOREIGN KEY (filename) REFERENCES documents(filename) ON DELETE CASCADE
             )
-        """)
+        """
+        )
         conn.commit()
 
 
@@ -230,6 +235,10 @@ def clear_all_data() -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM chunks")
         conn.execute("DELETE FROM documents")
+        try:
+            conn.execute("DELETE FROM plagiarism_incidents")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
@@ -249,3 +258,10 @@ def get_documents_by_class(class_section: str) -> list:
             "SELECT filename FROM documents WHERE class_section = ?", (class_section,)
         ).fetchall()
     return [r[0] for r in rows]
+
+
+def get_embedding_count() -> int:
+    """Return the number of durable chunk embeddings in the corpus."""
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(1) FROM chunks").fetchone()
+    return int(row[0]) if row else 0

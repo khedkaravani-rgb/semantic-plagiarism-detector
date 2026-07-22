@@ -7,14 +7,15 @@ Generates similarity heatmaps.
 - plot_chunk_similarity_comparison → Matplotlib chunk-level heatmap
 """
 
+from typing import Optional
+
+import matplotlib
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.figure import Figure
 import seaborn as sns
-from typing import Optional
+from matplotlib.figure import Figure
 
 matplotlib.use("Agg")
 
@@ -32,6 +33,7 @@ def plot_similarity_heatmap(
     figsize: Optional[tuple] = None,
     annotate: bool = True,
     dpi: int = 150,
+    theme_colors: Optional[dict] = None,
 ) -> Figure:
     """
     High-resolution Matplotlib heatmap for PNG download.
@@ -70,6 +72,16 @@ def plot_similarity_heatmap(
         annot_kws={"size": max(7, 14 - n), "weight": "bold"},
     )
 
+    if theme_colors:
+        fig.patch.set_facecolor(theme_colors.get("background", "#FFFFFF"))
+        ax.set_facecolor(theme_colors.get("surface", "#F8FAFC"))
+        ax.tick_params(colors=theme_colors.get("ink", "#0F172A"))
+        ax.xaxis.label.set_color(theme_colors.get("ink", "#0F172A"))
+        ax.yaxis.label.set_color(theme_colors.get("ink", "#0F172A"))
+        title_color = theme_colors.get("ink", "#0F172A")
+    else:
+        title_color = "black"
+
     data = similarity_df.values
 
     # Diagonal border (self-similarity)
@@ -104,7 +116,7 @@ def plot_similarity_heatmap(
                     )
                 )
 
-    ax.set_title(title, fontsize=15, fontweight="bold", pad=16)
+    ax.set_title(title, fontsize=15, fontweight="bold", pad=16, color=title_color)
     ax.set_xlabel("Documents", fontsize=11, labelpad=10)
     ax.set_ylabel("Documents", fontsize=11, labelpad=10)
     ax.set_xticklabels(
@@ -125,6 +137,13 @@ def plot_similarity_heatmap(
         frameon=True,
         fontsize=9,
     )
+    if theme_colors:
+        legend = ax.get_legend()
+        if legend:
+            for text in legend.get_texts():
+                text.set_color(theme_colors.get("ink", "#0F172A"))
+            legend.get_frame().set_facecolor(theme_colors.get("background", "#FFFFFF"))
+            legend.get_frame().set_edgecolor(theme_colors.get("border", "#E2E8F0"))
 
     fig.tight_layout()
     return fig
@@ -134,6 +153,7 @@ def plot_similarity_heatmap_plotly(
     similarity_df: pd.DataFrame,
     title: str = "Semantic Similarity Matrix",
     threshold: float = PLAGIARISM_THRESHOLD,
+    theme_colors: Optional[dict] = None,
 ):
     """
     Interactive Plotly heatmap with hover values and flagged-pair annotations.
@@ -207,6 +227,10 @@ def plot_similarity_heatmap_plotly(
                 )
 
     cell_px = max(80, 600 // n)
+
+    bg_color = theme_colors.get("background", "#FFFFFF") if theme_colors else "#FFFFFF"
+    ink_color = theme_colors.get("ink", "#0F172A") if theme_colors else "#0F172A"
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=16, family="Arial Black")),
         height=max(500, n * cell_px + 150),
@@ -216,9 +240,9 @@ def plot_similarity_heatmap_plotly(
         annotations=annotations,
         shapes=shapes,
         margin=dict(l=140, r=60, t=70, b=140),
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#FFFFFF",
-        font=dict(color="#0F172A"),
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font=dict(color=ink_color),
     )
 
     return fig
@@ -230,6 +254,7 @@ def plot_chunk_similarity_comparison(
     chunks_a: list,
     chunks_b: list,
     sim_matrix: np.ndarray,
+    theme_colors: Optional[dict] = None,
 ) -> Figure:
     """Chunk-level similarity heatmap between two documents."""
     na, nb = sim_matrix.shape
@@ -268,6 +293,14 @@ def plot_chunk_similarity_comparison(
     ax.set_ylabel(f"Chunks from {doc_a_name}", fontsize=10)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right", fontsize=7)
     ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=7)
+
+    if theme_colors:
+        fig.patch.set_facecolor(theme_colors.get("background", "#FFFFFF"))
+        ax.set_facecolor(theme_colors.get("surface", "#F8FAFC"))
+        ax.tick_params(colors=theme_colors.get("ink", "#0F172A"))
+        ax.xaxis.label.set_color(theme_colors.get("ink", "#0F172A"))
+        ax.yaxis.label.set_color(theme_colors.get("ink", "#0F172A"))
+        ax.title.set_color(theme_colors.get("ink", "#0F172A"))
 
     fig.tight_layout()
     return fig

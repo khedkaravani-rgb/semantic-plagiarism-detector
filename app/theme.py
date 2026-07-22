@@ -1,5 +1,11 @@
 import streamlit as st
 
+from src.core.config import (
+    DEFAULT_THRESHOLDS,
+    normalize_severity_label,
+    severity_key,
+)
+
 THEMES = {
     "Light": {
         "background": "#FFFFFF",
@@ -81,6 +87,12 @@ def inject_css() -> None:
             --border: {colors["border"]};
             --input: {colors["input"]};
             --neutral-soft: {colors["neutral_soft"]};
+            --danger: {colors["danger"]};
+            --danger-soft: {colors["danger_soft"]};
+            --warning: {colors["warning"]};
+            --warning-soft: {colors["warning_soft"]};
+            --success: {colors["success"]};
+            --success-soft: {colors["success_soft"]};
         }}
 
         html,
@@ -137,6 +149,8 @@ def inject_css() -> None:
             margin-bottom: 0.25rem;
         }}
 
+        /* ── Sidebar ────────────────────────────────────────────────── */
+
         [data-testid="stSidebar"] {{
             background-color: var(--surface) !important;
             border-right: 1px solid var(--border) !important;
@@ -148,12 +162,13 @@ def inject_css() -> None:
 
         .sidebar-brand-title {{
             font-family: 'Newsreader', serif;
-            font-size: 1.6rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: var(--ink);
             text-align: center;
             line-height: 1.2;
-            margin-top: 0.5rem;
+            margin-top: 0.25rem;
+            margin-bottom: 0;
         }}
 
         .sidebar-brand-kicker {{
@@ -164,7 +179,7 @@ def inject_css() -> None:
             text-transform: uppercase;
             letter-spacing: 0.1em;
             text-align: center;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1.25rem;
         }}
 
         .sidebar-section-label {{
@@ -179,6 +194,36 @@ def inject_css() -> None:
             border-bottom: 1px solid var(--border);
             padding-bottom: 2px;
         }}
+
+        .sidebar-user-badge {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background-color: var(--neutral-soft);
+            border: 1px solid var(--border);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 0.75rem;
+        }}
+
+        .sidebar-user-badge .avatar {{
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background-color: var(--accent);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            flex-shrink: 0;
+        }}
+
+        /* ── Metric cards ───────────────────────────────────────────── */
 
         div[data-testid="stMetric"] {{
             background-color: var(--card) !important;
@@ -211,6 +256,8 @@ def inject_css() -> None:
             font-weight: 600 !important;
         }}
 
+        /* ── Badge ──────────────────────────────────────────────────── */
+
         .badge {{
             display: inline-block;
             padding: 4px 10px;
@@ -242,17 +289,94 @@ def inject_css() -> None:
             font-weight: 700 !important;
         }}
 
+        /* ── Login container ────────────────────────────────────────── */
+
         .login-container {{
             background-color: var(--card) !important;
             border: 1px solid var(--border) !important;
             border-radius: 12px !important;
             padding: 2.5rem !important;
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.18) !important;
+            max-width: 480px;
+            margin: 2rem auto;
+            animation: loginSlideIn 0.4s ease-out;
         }}
+
+        .login-container .login-header {{
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }}
+
+        .login-container .login-icon {{
+            font-size: 3rem;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }}
+
+        .login-container .login-title {{
+            font-family: 'Newsreader', serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--ink);
+            margin-bottom: 0.25rem;
+        }}
+
+        .login-container .login-subtitle {{
+            font-size: 0.85rem;
+            color: var(--muted);
+        }}
+
+        .login-accent-bar {{
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+            border-radius: 2px;
+            margin-bottom: 1.5rem;
+        }}
+
+        @keyframes loginSlideIn {{
+            from {{
+                opacity: 0;
+                transform: translateY(12px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
+        }}
+
+        /* ── Warning card accent borders ────────────────────────────── */
+
+        .warning-card-high {{
+            border-left: 4px solid var(--danger) !important;
+        }}
+
+        .warning-card-medium {{
+            border-left: 4px solid var(--warning) !important;
+        }}
+
+        .warning-card-low {{
+            border-left: 4px solid var(--success) !important;
+        }}
+
+        /* ── Similarity score pill ──────────────────────────────────── */
+
+        .sim-pill {{
+            display: inline-block;
+            padding: 3px 12px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            font-family: 'IBM Plex Mono', monospace;
+            color: white;
+        }}
+
+        /* ── Mono text ──────────────────────────────────────────────── */
 
         .mono-text {{
             font-family: 'IBM Plex Mono', monospace !important;
         }}
+
+        /* ── Legend ─────────────────────────────────────────────────── */
 
         .legend-container {{
             display: flex;
@@ -277,6 +401,8 @@ def inject_css() -> None:
             display: inline-block;
         }}
 
+        /* ── Form inputs ────────────────────────────────────────────── */
+
         .stTextInput input,
         .stTextArea textarea,
         .stNumberInput input,
@@ -299,6 +425,19 @@ def inject_css() -> None:
             border-color: var(--border) !important;
         }}
 
+        .clear-all-container button {{
+            background-color: var(--danger) !important;
+            color: white !important;
+            border-color: var(--danger) !important;
+            font-weight: 600 !important;
+        }}
+
+        .clear-all-container button:hover {{
+            background-color: #ff3333 !important;
+            color: white !important;
+            border-color: #ff3333 !important;
+        }}
+
         [data-testid="stExpander"],
         [data-testid="stForm"] {{
             background-color: var(--card) !important;
@@ -315,6 +454,8 @@ def inject_css() -> None:
             border-color: var(--border) !important;
         }}
 
+        /* ── Tabs ───────────────────────────────────────────────────── */
+
         [data-testid="stTabs"] button {{
             color: var(--muted) !important;
         }}
@@ -327,36 +468,143 @@ def inject_css() -> None:
         hr {{
             border-color: var(--border) !important;
         }}
+
+        /* ── Enhanced footer ────────────────────────────────────────── */
+
+        .app-footer {{
+            text-align: center;
+            padding: 1rem 0 0.5rem;
+            font-size: 0.78rem;
+            color: var(--muted);
+        }}
+
+        .app-footer a {{
+            color: var(--accent);
+            text-decoration: none;
+        }}
+
+        .app-footer a:hover {{
+            text-decoration: underline;
+        }}
+
+        /* ── Empty state ────────────────────────────────────────────── */
+
+        .empty-state {{
+            text-align: center;
+            padding: 2.5rem 1rem;
+            color: var(--muted);
+        }}
+
+        .empty-state .empty-icon {{
+            font-size: 3rem;
+            line-height: 1;
+            margin-bottom: 0.75rem;
+        }}
+
+        .empty-state .empty-title {{
+            font-family: 'Newsreader', serif;
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: var(--ink);
+            margin-bottom: 0.25rem;
+        }}
+
+        .empty-state .empty-desc {{
+            font-size: 0.85rem;
+            max-width: 400px;
+            margin: 0 auto;
+        }}
+
+        /* ── Pipeline progress ──────────────────────────────────────── */
+
+        .pipeline-steps {{
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            justify-content: center;
+            margin: 1rem 0;
+            flex-wrap: wrap;
+        }}
+
+        .pipeline-step {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background-color: var(--neutral-soft);
+            color: var(--muted);
+            border: 1px solid var(--border);
+        }}
+
+        .pipeline-step.active {{
+            background-color: var(--accent);
+            color: white;
+            border-color: var(--accent);
+            animation: pipelinePulse 1.2s ease-in-out infinite;
+        }}
+
+        .pipeline-step.done {{
+            background-color: var(--success-soft);
+            color: var(--success);
+            border-color: var(--success);
+        }}
+
+        .pipeline-arrow {{
+            color: var(--muted);
+            font-size: 0.7rem;
+        }}
+
+        @keyframes pipelinePulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.7; }}
+        }}
+
+        /* ── Responsive: mobile / tablet ────────────────────────────── */
+
+        @media (max-width: 768px) {{
+            .login-container {{
+                padding: 1.5rem !important;
+                margin: 1rem auto;
+            }}
+
+            .sidebar-brand-title {{
+                font-size: 1.25rem;
+            }}
+
+            div[data-testid="stMetricValue"] > div {{
+                font-size: 1.3rem !important;
+            }}
+        }}
     </style>
     """
 
     st.markdown(css, unsafe_allow_html=True)
 
 
-def severity_tier(score: float, threshold: float) -> str:
-    """
-    Categorizes the score into a severity tier matching the backend.
+# ── Severity helpers ──────────────────────────────────────────────────────────
 
-    High: >= 0.90
-    Medium: >= threshold
-    Low: < threshold
+
+def severity_tier(
+    score: float,
+    threshold: float = DEFAULT_THRESHOLDS.plagiarism,
+) -> str:
+    """Return the central fixed severity tier.
+
+    ``threshold`` is retained for backward compatibility with existing callers.
+    It controls flagging elsewhere and does not redefine severity boundaries.
     """
-    if score >= 0.90:
-        return "high"
-    elif score >= threshold:
-        return "medium"
-    else:
-        return "low"
+    del threshold
+    return severity_key(score)
 
 
 def tier_from_severity_label(label: str) -> str:
-    """Maps existing label string to tier key."""
-    clean = label.lower()
-    if "high" in clean:
-        return "high"
-    elif "medium" in clean or "warn" in clean:
-        return "medium"
-    else:
+    """Map canonical or legacy severity labels to a lowercase tier."""
+    try:
+        return normalize_severity_label(label).lower()
+    except ValueError:
         return "low"
 
 
@@ -388,3 +636,79 @@ def badge_html(tier: str, label: str = None) -> str:
 
     display_label = label if label is not None else default_label
     return f'<span class="badge" style="background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color};">{display_label}</span>'
+
+
+# ── UI helpers ────────────────────────────────────────────────────────────────
+
+
+def format_similarity_html(
+    score: float,
+    threshold: float = DEFAULT_THRESHOLDS.plagiarism,
+) -> str:
+    """Return a themed similarity pill using central severity boundaries."""
+    del threshold
+    colors = get_colors()
+    tier = severity_key(score)
+
+    if tier == "high":
+        bg = colors["danger"]
+    elif tier == "medium":
+        bg = colors["warning"]
+    else:
+        bg = colors["success"]
+
+    return (
+        f'<span class="sim-pill" style="background:{bg};">'
+        f"Similarity: {score * 100:.1f}%</span>"
+    )
+
+
+def empty_state_html(icon: str, title: str, description: str) -> str:
+    """Return styled empty-state HTML block."""
+    return (
+        f'<div class="empty-state">'
+        f'<div class="empty-icon">{icon}</div>'
+        f'<div class="empty-title">{title}</div>'
+        f'<div class="empty-desc">{description}</div>'
+        f"</div>"
+    )
+
+
+def sidebar_user_badge_html(username: str, role: str) -> str:
+    """Return the sidebar user badge with avatar circle."""
+    initial = username[0].upper() if username else "?"
+    return (
+        f'<div class="sidebar-user-badge">'
+        f'<div class="avatar">{initial}</div>'
+        f"<div><strong>{username}</strong><br>"
+        f'<span style="font-size:0.7rem;color:var(--muted);">{role.upper()}</span></div>'
+        f"</div>"
+    )
+
+
+def pipeline_progress_html(steps: list[str], active_index: int = -1) -> str:
+    """Return a horizontal pipeline progress indicator.
+
+    Args:
+        steps: List of step labels (e.g. ["Extract", "Chunk", "Embed", ...]).
+        active_index: 0-based index of the currently running step.
+            Steps before *active_index* are marked done; steps after are
+            pending.  Pass -1 (default) to mark all steps as pending.
+    """
+    parts = []
+    for i, step in enumerate(steps):
+        if active_index < 0:
+            cls = "pipeline-step"
+        elif i < active_index:
+            cls = "pipeline-step done"
+        elif i == active_index:
+            cls = "pipeline-step active"
+        else:
+            cls = "pipeline-step"
+
+        prefix = "✓ " if (active_index >= 0 and i < active_index) else ""
+        parts.append(f'<span class="{cls}">{prefix}{step}</span>')
+        if i < len(steps) - 1:
+            parts.append('<span class="pipeline-arrow">→</span>')
+
+    return f'<div class="pipeline-steps">{"".join(parts)}</div>'

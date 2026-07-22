@@ -32,6 +32,8 @@ REDIS_URL = os.getenv("REDIS_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB
 SESSION_TTL = 15 * 60  # 15 minutes for session state
 FAISS_INDEX_TTL = 24 * 60 * 60  # 24 hours for FAISS index cache
 ANALYSIS_RESULTS_TTL = 2 * 60 * 60  # 2 hours for analysis results
+LOGIN_LOCKOUT_TTL = 15 * 60  # 15 minutes for login lockout
+UPLOAD_RATE_TTL = 60 * 60  # 1 hour for upload rate limiting
 
 
 class RedisCache:
@@ -236,3 +238,55 @@ def get_analysis_results(analysis_key: str) -> Optional[dict]:
     """Retrieve analysis results from cache."""
     cache_key = f"analysis:{analysis_key}"
     return _cache.get(cache_key)
+
+
+def increment_login_attempts(identifier: str) -> int:
+    """Increment failed login attempt counter for a username/IP."""
+    cache_key = f"login_attempts:{identifier}"
+    current = _cache.get(cache_key)
+    if current is None:
+        current = 0
+    current += 1
+    _cache.set(cache_key, current, LOGIN_LOCKOUT_TTL)
+    return current
+
+
+def get_login_attempts(identifier: str) -> int:
+    """Get current failed login attempt count for a username/IP."""
+    cache_key = f"login_attempts:{identifier}"
+    current = _cache.get(cache_key)
+    return current if current is not None else 0
+
+
+def is_login_locked_out(identifier: str) -> bool:
+    """Check if a username/IP is locked out due to too many failed attempts."""
+    return get_login_attempts(identifier) >= 5
+
+
+def clear_login_attempts(identifier: str) -> bool:
+    """Clear failed login attempt counter after successful login."""
+    cache_key = f"login_attempts:{identifier}"
+    return _cache.delete(cache_key)
+
+
+def increment_upload_count(username: str) -> int:
+    """Increment upload counter for a user per hour."""
+    cache_key = f"uploads:{username}"
+    current = _cache.get(cache_key)
+    if current is None:
+        current = 0
+    current += 1
+    _cache.set(cache_key, current, UPLOAD_RATE_TTL)
+    return current
+
+
+def get_upload_count(username: str) -> int:
+    """Get current upload count for a user in the current hour window."""
+    cache_key = f"uploads:{username}"
+    current = _cache.get(cache_key)
+    return current if current is not None else 0
+
+
+def is_upload_rate_limited(username: str) -> bool:
+    """Check if a user has exceeded the upload rate limit (100 uploads/hour)."""
+    return get_upload_count(username) >= 100

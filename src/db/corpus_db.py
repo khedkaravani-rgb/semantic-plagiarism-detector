@@ -11,6 +11,11 @@ from datetime import datetime
 
 import numpy as np
 
+from src.db.migrations import (
+    delete_all_if_table_exists,
+    migrate_corpus_database,
+)
+
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "corpus.db")
 )
@@ -23,7 +28,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_corpus_db() -> None:
-    """Create the corpus and chunks tables if they do not exist."""
+    """Create or upgrade corpus.db without deleting persisted data."""
     with _connect() as conn:
         conn.execute(
             """
@@ -34,7 +39,10 @@ def init_corpus_db() -> None:
                 upload_date      TEXT    NOT NULL,
                 class_section    TEXT,
                 student_name     TEXT,
-                assignment_title TEXT
+                assignment_title TEXT,
+                pdf_author       TEXT,
+                pdf_creation_date TEXT,
+                pdf_title        TEXT
             )
         """
         )
@@ -48,6 +56,12 @@ def init_corpus_db() -> None:
             conn.execute("ALTER TABLE documents ADD COLUMN student_name TEXT")
         if "assignment_title" not in columns:
             conn.execute("ALTER TABLE documents ADD COLUMN assignment_title TEXT")
+        if "pdf_author" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_author TEXT")
+        if "pdf_creation_date" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_creation_date TEXT")
+        if "pdf_title" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_title TEXT")
 
         conn.execute(
             """
@@ -62,6 +76,7 @@ def init_corpus_db() -> None:
         """
         )
         conn.commit()
+        migrate_corpus_database(conn)
 
 
 def add_document(
@@ -70,6 +85,9 @@ def add_document(
     class_section: str = None,
     student_name: str = None,
     assignment_title: str = None,
+    pdf_author: str = None,
+    pdf_creation_date: str = None,
+    pdf_title: str = None,
 ) -> bool:
     """
     Insert a new document metadata row.
@@ -78,7 +96,7 @@ def add_document(
     try:
         with _connect() as conn:
             conn.execute(
-                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     filename,
                     file_hash,
@@ -86,6 +104,9 @@ def add_document(
                     class_section,
                     student_name,
                     assignment_title,
+                    pdf_author,
+                    pdf_creation_date,
+                    pdf_title,
                 ),
             )
             conn.commit()
@@ -107,7 +128,7 @@ def get_all_documents() -> list:
     """Return all indexed documents sorted by upload date descending."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT filename, file_hash, upload_date, class_section, student_name, assignment_title FROM documents ORDER BY upload_date DESC"
+            "SELECT filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title FROM documents ORDER BY upload_date DESC"
         ).fetchall()
     return [
         {
@@ -117,6 +138,9 @@ def get_all_documents() -> list:
             "class_section": r[3],
             "student_name": r[4],
             "assignment_title": r[5],
+            "pdf_author": r[6],
+            "pdf_creation_date": r[7],
+            "pdf_title": r[8],
         }
         for r in rows
     ]
@@ -212,15 +236,12 @@ def get_document_chunks_count(filename: str) -> int:
 
 
 def clear_all_data() -> None:
-    init_corpus_db()
-
+    """Clear known corpus tables while tolerating partial schemas."""
     with _connect() as conn:
-        conn.execute("DELETE FROM chunks")
-        conn.execute("DELETE FROM documents")
-        try:
-            conn.execute("DELETE FROM plagiarism_incidents")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("PRAGMA foreign_keys = ON")
+        delete_all_if_table_exists(conn, "chunks")
+        delete_all_if_table_exists(conn, "documents")
+        delete_all_if_table_exists(conn, "plagiarism_incidents")
         conn.commit()
 
 

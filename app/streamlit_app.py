@@ -13,6 +13,7 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+import base64
 import io as _io
 import time
 import datetime
@@ -64,7 +65,7 @@ from src.db import (
     get_unique_class_sections,
     get_documents_by_class,
 )
-from src.utils.pdf_report import generate_plagiarism_report
+from src.utils.pdf_report import generate_plagiarism_report, highlight_pdf_matches
 from src.utils.badge_generator import (
     generate_badge_png,
     generate_badge_pdf,
@@ -1486,81 +1487,122 @@ else:
                 chunked_docs.get(doc_b, []),
             )
 
-            if emb_a.size > 0 and emb_b.size > 0:
-                max_d = 15
-                fig2 = plot_chunk_similarity_comparison(
-                    doc_a,
-                    doc_b,
-                    chunks_a[:max_d],
-                    chunks_b[:max_d],
-                    cosine_similarity(emb_a, emb_b)[:max_d, :max_d],
-                    theme_colors=get_colors(),
-                )
-                st.pyplot(fig2, use_container_width=True)
+            drill_tab_analysis, drill_tab_viewer = st.tabs(
+                ["📊 Chunk Matches & Report", "📄 Document Viewer"]
+            )
 
-                top_pairs = find_most_similar_chunks(
-                    chunks_a, chunks_b, emb_a, emb_b, top_k=5, threshold=threshold
-                )
-                if top_pairs:
-                    st.subheader("🔑 Top Suspicious Paragraph Pairs")
-                    for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
-                        with st.expander(
-                            f"#{rank} — Similarity: {sim:.1%}", expanded=(rank == 1)
+            with drill_tab_analysis:
+                if emb_a.size > 0 and emb_b.size > 0:
+                    max_d = 15
+                    fig2 = plot_chunk_similarity_comparison(
+                        doc_a,
+                        doc_b,
+                        chunks_a[:max_d],
+                        chunks_b[:max_d],
+                        cosine_similarity(emb_a, emb_b)[:max_d, :max_d],
+                        theme_colors=get_colors(),
+                    )
+                    st.pyplot(fig2, use_container_width=True)
+
+                    top_pairs = find_most_similar_chunks(
+                        chunks_a, chunks_b, emb_a, emb_b, top_k=5, threshold=threshold
+                    )
+                    if top_pairs:
+                        st.subheader("🔑 Top Suspicious Paragraph Pairs")
+                        for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
+                            with st.expander(
+                                f"#{rank} — Similarity: {sim:.1%}", expanded=(rank == 1)
+                            ):
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.markdown(f"**From {doc_a}**")
+                                    st.info(ca)
+                                with col2:
+                                    st.markdown(f"**From {doc_b}**")
+                                    st.warning(cb)
+
+                        st.divider()
+                        st.subheader("📄 Generate PDF Report")
+                        st.caption(
+                            "Download a formal plagiarism report for this document pair."
+                        )
+
+                        if st.button(
+                            "📥 Generate PDF Report",
+                            type="primary",
+                            use_container_width=True,
+                            key="pdf_report",
                         ):
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.markdown(f"**From {doc_a}**")
-                                st.info(ca)
-                            with col2:
-                                st.markdown(f"**From {doc_b}**")
-                                st.warning(cb)
+                            with st.spinner("Generating PDF report..."):
+                                try:
+                                    pdf_buffer = generate_plagiarism_report(
+                                        doc_a=doc_a,
+                                        doc_b=doc_b,
+                                        overall_similarity=score,
+                                        threshold=threshold,
+                                        top_pairs=top_pairs,
+                                        report_title="Plagiarism Detection Report",
+                                    )
+                                    st.download_button(
+                                        label="⬇️ Download PDF Report",
+                                        data=pdf_buffer,
+                                        file_name=f"plagiarism_report_{doc_a}_{doc_b}.pdf",
+                                        mime="application/pdf",
+                                        use_container_width=True,
+                                    )
+                                except Exception as e:
+                                    st.error(f"Error generating PDF report: {str(e)}")
+                    else:
+                        st.success("No paragraph pairs above the threshold for this pair.")
 
-                    st.divider()
-                    st.subheader("📄 Generate PDF Report")
-                    st.caption(
-                        "Download a formal plagiarism report for this document pair."
-                    )
+                with st.expander("📄 View Raw Extracted Text"):
+                    t1, t2 = st.columns(2)
+                    with t1:
+                        st.markdown(f"**{doc_a}**")
+                        st.text_area(
+                            "", raw_texts.get(doc_a, "(empty)"), height=300, key="ta"
+                        )
+                    with t2:
+                        st.markdown(f"**{doc_b}**")
+                        st.text_area(
+                            "", raw_texts.get(doc_b, "(empty)"), height=300, key="tb"
+                        )
 
-                    if st.button(
-                        "📥 Generate PDF Report",
-                        type="primary",
-                        use_container_width=True,
-                        key="pdf_report",
-                    ):
-                        with st.spinner("Generating PDF report..."):
-                            try:
-                                pdf_buffer = generate_plagiarism_report(
-                                    doc_a=doc_a,
-                                    doc_b=doc_b,
-                                    overall_similarity=score,
-                                    threshold=threshold,
-                                    top_pairs=top_pairs,
-                                    report_title="Plagiarism Detection Report",
-                                )
-                                st.download_button(
-                                    label="⬇️ Download PDF Report",
-                                    data=pdf_buffer,
-                                    file_name=f"plagiarism_report_{doc_a}_{doc_b}.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True,
-                                )
-                            except Exception as e:
-                                st.error(f"Error generating PDF report: {str(e)}")
+            # --- In-App PDF Preview with Highlighted Matches (#145) ---
+            with drill_tab_viewer:
+                st.subheader("📄 In-App PDF Preview with Highlighted Matches")
+                selected_view_doc = st.radio(
+                    "Select Document to Preview:",
+                    options=[doc_a, doc_b],
+                    horizontal=True,
+                    key="doc_viewer_select",
+                )
+
+                doc_source = file_bytes_dict.get(selected_view_doc)
+                matching_chunks_to_highlight = chunks_a if selected_view_doc == doc_a else chunks_b
+
+                if doc_source and str(selected_view_doc).lower().endswith(".pdf"):
+                    with st.spinner("Generating highlighted PDF preview..."):
+                        try:
+                            highlighted_pdf_bytes = highlight_pdf_matches(
+                                pdf_source=doc_source,
+                                matching_chunks=matching_chunks_to_highlight,
+                            )
+
+                            base64_pdf = base64.b64encode(highlighted_pdf_bytes).decode("utf-8")
+                            pdf_display = f"""
+                                <iframe
+                                    src="data:application/pdf;base64,{base64_pdf}"
+                                    width="100%"
+                                    height="850px"
+                                    type="application/pdf">
+                                </iframe>
+                            """
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                        except Exception as err:
+                            st.error(f"Unable to render PDF preview: {str(err)}")
                 else:
-                    st.success("No paragraph pairs above the threshold for this pair.")
-
-            with st.expander("📄 View Raw Extracted Text"):
-                t1, t2 = st.columns(2)
-                with t1:
-                    st.markdown(f"**{doc_a}**")
-                    st.text_area(
-                        "", raw_texts.get(doc_a, "(empty)"), height=300, key="ta"
-                    )
-                with t2:
-                    st.markdown(f"**{doc_b}**")
-                    st.text_area(
-                        "", raw_texts.get(doc_b, "(empty)"), height=300, key="tb"
-                    )
+                    st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
     # ══ TAB 6: User Management ═══════════════════════════════════════════════════
     with tab_users:

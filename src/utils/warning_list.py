@@ -174,7 +174,8 @@ def render_warning_controls(
         st.success("✅ No suspicious pairs found above the current threshold.")
         return
 
-    search_col, size_col = st.columns([3, 1])
+    search_col, toggle_col, size_col = st.columns([3, 2, 1])
+
     with search_col:
         search_query = st.text_input(
             "Search warnings",
@@ -182,6 +183,13 @@ def render_warning_controls(
             key="warning_search",
             on_change=_reset_page,
         )
+
+    with toggle_col:
+        hide_low_severity = st.checkbox(
+            "Hide Low Severity",
+            key="hide_low_severity",
+        )
+
     with size_col:
         page_size = st.selectbox(
             "Warnings per page",
@@ -191,6 +199,7 @@ def render_warning_controls(
         )
 
     p1, d1, p2, d2 = st.columns([2, 1, 2, 1])
+
     with p1:
         primary_label = st.selectbox(
             "Primary sort",
@@ -198,6 +207,7 @@ def render_warning_controls(
             key="warning_primary_sort",
             on_change=_reset_page,
         )
+
     with d1:
         primary_direction = st.selectbox(
             "Direction",
@@ -205,6 +215,7 @@ def render_warning_controls(
             key="warning_primary_direction",
             on_change=_reset_page,
         )
+
     with p2:
         secondary_label = st.selectbox(
             "Then sort by",
@@ -213,6 +224,7 @@ def render_warning_controls(
             key="warning_secondary_sort",
             on_change=_reset_page,
         )
+
     with d2:
         secondary_direction = st.selectbox(
             "Then direction",
@@ -221,8 +233,18 @@ def render_warning_controls(
             on_change=_reset_page,
         )
 
+    # Hide low severity warnings when checkbox is enabled
+    display_flags = [_normalise_warning(flag) for flag in flags]
+
+    if hide_low_severity:
+        display_flags = [
+            flag
+            for flag in display_flags
+            if flag["severity"] != "Low"
+        ]
+
     sorted_flags, current_page = prepare_warning_page(
-        flags,
+        display_flags,
         search_query=search_query,
         primary_field=SORT_FIELDS[primary_label],
         primary_descending=primary_direction == "Descending",
@@ -231,7 +253,6 @@ def render_warning_controls(
         page=st.session_state.warning_page,
         page_size=page_size,
     )
-
     if current_page.page != st.session_state.warning_page:
         st.session_state.warning_page = current_page.page
 

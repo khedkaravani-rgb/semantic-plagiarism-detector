@@ -106,6 +106,7 @@ from src.core.document_parser import (
     normalize_ocr_settings,
     prepare_text_for_embedding,
     extract_pdf_metadata,
+    remove_ignore_phrases,
 )
 
 # Initialize corpus database
@@ -292,7 +293,19 @@ with st.sidebar:
             key="faiss_top_k_slider",
         )
 
-        with st.expander("🔤 OCR Settings", expanded=False):
+        with st.expander("� Ignore Phrases", expanded=False):
+            st.caption(
+                "Enter common template text or standard assignment questions to ignore during analysis. "
+                "These phrases will be removed from documents before chunking and embedding."
+            )
+            ignore_phrases = st.text_area(
+                "Ignore Phrases (one per line)",
+                placeholder="Q1: Explain the theory of relativity\nQ2: Describe the process of photosynthesis\nInstructions: Write in your own words",
+                help="Each line represents a phrase to ignore. Matching text will be removed from all documents.",
+                key="ignore_phrases_textarea",
+            )
+
+        with st.expander("� OCR Settings", expanded=False):
             st.caption(
                 "Used only for scanned or image-only PDF pages. "
                 "Text-based PDFs continue to use native extraction."
@@ -338,6 +351,7 @@ with st.sidebar:
         faiss_top_k = 5
         ocr_language = DEFAULT_OCR_LANGUAGE
         ocr_dpi = DEFAULT_OCR_DPI
+        ignore_phrases = ""
         st.info("ℹ️ Settings configuration is restricted to Administrators.")
 
     st.markdown("---")
@@ -506,10 +520,15 @@ if user_role != "admin":
                         embeddings_matrix, index_type="auto"
                     )
 
+                    # Apply ignore phrases to query if configured
+                    processed_query = query_text.strip()
+                    if ignore_phrases and ignore_phrases.strip():
+                        processed_query = remove_ignore_phrases(processed_query, ignore_phrases)
+
                     # Embed the query
                     from src.core.embedding_model import embed_chunks
 
-                    query_vec = embed_chunks([query_text.strip()])[0]
+                    query_vec = embed_chunks([processed_query])[0]
 
                     # Search with threshold
                     faiss_threshold = threshold
@@ -951,6 +970,13 @@ else:
 
         if failed_files:
             raise OCRFileBatchError(failed_files, failure_details)
+
+        # Apply ignore phrases to raw texts before chunking
+        if ignore_phrases and ignore_phrases.strip():
+            raw_texts = {
+                name: remove_ignore_phrases(text, ignore_phrases)
+                for name, text in raw_texts.items()
+            }
 
         # Original chunks are preserved for UI display.
         chunked_docs = chunk_documents(raw_texts)

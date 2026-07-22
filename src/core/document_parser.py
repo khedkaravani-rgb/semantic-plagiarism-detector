@@ -117,6 +117,38 @@ def strip_bibliography(text: str) -> str:
     return text
 
 
+def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
+    """Remove specified ignore phrases from text.
+
+    Args:
+        text: The text to process
+        ignore_phrases: Multi-line string where each line is a phrase to remove
+
+    Returns:
+        Text with all ignore phrases removed
+    """
+    if not ignore_phrases or not ignore_phrases.strip():
+        return text
+
+    # Split ignore phrases by line and filter empty lines
+    phrases = [line.strip() for line in ignore_phrases.split('\n') if line.strip()]
+
+    if not phrases:
+        return text
+
+    result = text
+    for phrase in phrases:
+        # Remove exact matches of the phrase
+        result = result.replace(phrase, '')
+
+    # Clean up extra whitespace left after removal
+    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)  # Collapse multiple blank lines
+    result = re.sub(r'[ \t]+', ' ', result)  # Collapse multiple spaces
+    result = result.strip()
+
+    return result
+
+
 def prepare_text_for_embedding(text: str) -> dict:
     """
     Preserve the original text and prepare English text for embeddings.

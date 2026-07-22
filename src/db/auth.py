@@ -19,6 +19,8 @@ set_tour_completed(username, completed) → None
 import os
 import sqlite3
 import bcrypt
+import uuid
+import os
 
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "users.db")

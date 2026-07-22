@@ -571,6 +571,8 @@ with st.sidebar:
         clear_session(SESSION_ID)
         st.rerun()
 
+
+
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🔍 Semantic Plagiarism Detection System")
 st.markdown(
@@ -815,7 +817,7 @@ else:
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
         "📂 Upload Assignments",
-        type=["pdf", "docx", "txt"],
+        type=["pdf", "docx", "txt", "zip"],
         accept_multiple_files=True,
         key="admin_file_uploader",
     )
@@ -876,7 +878,20 @@ else:
 
     if uploaded_files:
         for f in uploaded_files:
-            file_bytes_dict[f.name] = f.read()
+            if f.name.lower().endswith(".zip"):
+                try:
+                    from src.utils.zip_processor import process_zip_file
+                    zip_files = process_zip_file(f.read())
+                    if not zip_files:
+                        st.error(f"⚠️ ZIP file '{f.name}' contains no supported documents (.pdf, .docx, .txt).")
+                    else:
+                        file_bytes_dict.update(zip_files)
+                except ValueError as ve:
+                    st.error(f"⚠️ Failed to process ZIP archive '{f.name}': {str(ve)}")
+                except Exception:
+                    st.error(f"⚠️ Failed to process ZIP archive '{f.name}': Unknown error occurred.")
+            else:
+                file_bytes_dict[f.name] = f.read()
             f.seek(0)
 
     if st.session_state.drive_files_dict:

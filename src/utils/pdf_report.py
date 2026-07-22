@@ -9,6 +9,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import List, Optional, Tuple
 
+import fitz
 from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -24,15 +25,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib import colors
-from reportlab.lib.utils import ImageReader
-from io import BytesIO
-from typing import List, Optional, Tuple
-from datetime import datetime
-import fitz
-
 
 
 def get_similarity_color(score: float) -> HexColor:
@@ -329,31 +321,9 @@ def highlight_pdf_matches(
     matching_chunks: List[str],
     highlight_color: Tuple[float, float, float] = (1.0, 0.85, 0.0),  # Yellow
 ) -> bytes:
-    """
-    Opens an original PDF, searches for matching plagiarized text chunks,
+    """Opens an original PDF, searches for matching plagiarized text chunks,
     applies yellow highlight annotations on exact coordinate boxes,
     and returns the modified PDF as bytes.
-
-    Args:
-        pdf_source: Path to the PDF file (str) or raw bytes (bytes)
-        matching_chunks: List of text chunk strings to search and highlight
-        highlight_color: RGB tuple normalized between 0.0 and 1.0
-
-    Returns:
-        bytes: Binary PDF data with highlighted matches
-
-
-import fitz  # PyMuPDF
-
-
-def highlight_pdf_matches(
-    pdf_source: str | bytes,
-    matching_chunks: List[str],
-    highlight_color: Tuple[float, float, float] = (1.0, 0.85, 0.0),  # Yellow
-) -> bytes:
-    """Opens a PDF, searches for matching text chunks, applies yellow highlights
-
-    on exact bounding box coordinates, and returns the modified PDF bytes.
     """
     if isinstance(pdf_source, bytes):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
@@ -364,12 +334,6 @@ def highlight_pdf_matches(
         for chunk in matching_chunks:
             chunk_clean = chunk.strip()
             # Skip very short or empty chunks to prevent accidental full-page highlights
-            if len(chunk_clean) < 3:
-                continue
-
-            # Search for coordinate rectangles of the text on the page
-            chunk_clean = str(chunk).strip()
-            # Avoid highlighting tiny single words/chars to prevent false positives
             if len(chunk_clean) < 3:
                 continue
 
@@ -384,6 +348,3 @@ def highlight_pdf_matches(
     output_buffer = doc.tobytes()
     doc.close()
     return output_buffer
-    output_bytes = doc.tobytes()
-    doc.close()
-    return output_bytes

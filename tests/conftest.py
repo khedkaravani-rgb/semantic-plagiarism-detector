@@ -24,6 +24,8 @@ import pathlib
 import shutil
 import sys
 import types
+
+import pytest
 from unittest.mock import MagicMock
 
 # ── Repository Root Path Bootstrap ────────────────────────────────────────────
@@ -47,3 +49,10 @@ if "sentence_transformers" not in sys.modules:
 # will be gracefully skipped on machines that don't have Tesseract installed
 # (e.g. local developer machines, basic CI environments).
 TESSERACT_AVAILABLE = shutil.which("tesseract") is not None
+
+
+
+@pytest.fixture
+def sqlite_database_path(tmp_path):
+    """Return an isolated SQLite path for migration/database tests."""
+    return tmp_path / "test.db"

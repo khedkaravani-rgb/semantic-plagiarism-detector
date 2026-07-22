@@ -51,6 +51,68 @@ def wrap_text(text: str, max_chars: int = 400) -> str:
     return text[: max_chars - 3] + "..."
 
 
+def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
+    """
+    Compresses a ReportLab generated PDF in-memory buffer using PyMuPDF (fitz)
+    or PyPDF2/pypdf as a fallback.
+    """
+    try:
+        # Save original position
+        original_pos = pdf_buffer.tell()
+        pdf_buffer.seek(0)
+        pdf_bytes = pdf_buffer.getvalue()
+
+        # 1. Try PyMuPDF (fitz) which is very powerful for garbage collection and stream compression
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            # garbage=4 performs maximum cleanup including duplicate merging
+            compressed_bytes = doc.tobytes(garbage=4, deflate=True)
+            doc.close()
+            return BytesIO(compressed_bytes)
+        except Exception:
+            # Fallback to pypdf if PyMuPDF fails
+            try:
+                from pypdf import PdfReader, PdfWriter
+
+                reader = PdfReader(BytesIO(pdf_bytes))
+                writer = PdfWriter()
+                for page in reader.pages:
+                    writer.add_page(page)
+                for page in writer.pages:
+                    page.compress_content_streams()
+                out_buf = BytesIO()
+                writer.write(out_buf)
+                out_buf.seek(0)
+                return out_buf
+            except ImportError:
+                try:
+                    from PyPDF2 import PdfReader, PdfWriter
+
+                    reader = PdfReader(BytesIO(pdf_bytes))
+                    writer = PdfWriter()
+                    for page in reader.pages:
+                        writer.add_page(page)
+                    for page in writer.pages:
+                        page.compress_content_streams()
+                    out_buf = BytesIO()
+                    writer.write(out_buf)
+                    out_buf.seek(0)
+                    return out_buf
+                except ImportError:
+                    pass
+
+        # If all compression attempts fail, return the original buffer
+        pdf_buffer.seek(original_pos)
+        return pdf_buffer
+    except Exception:
+        # Absolute safety fallback
+        try:
+            pdf_buffer.seek(0)
+        except Exception:
+            pass
+        return pdf_buffer
+
+
 def generate_plagiarism_report(
     doc_a: str,
     doc_b: str,
@@ -311,8 +373,7 @@ def generate_plagiarism_report(
 
     # Build PDF
     doc.build(story, onFirstPage=_draw_header, onLaterPages=_draw_header)
-    buffer.seek(0)
-    return buffer
+    return compress_pdf_buffer(buffer)
 
 
 def highlight_pdf_matches(

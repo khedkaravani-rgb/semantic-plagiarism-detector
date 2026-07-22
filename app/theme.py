@@ -1,10 +1,6 @@
 import streamlit as st
 
-from src.core.config import (
-    DEFAULT_THRESHOLDS,
-    normalize_severity_label,
-    severity_key,
-)
+from src.core.config import DEFAULT_THRESHOLDS, normalize_severity_label, severity_key
 
 THEMES = {
     "Light": {
@@ -645,13 +641,13 @@ def severity_tier(
     score: float,
     threshold: float = DEFAULT_THRESHOLDS.plagiarism,
 ) -> str:
-    """Return the central fixed severity tier.
-
-    ``threshold`` is retained for backward compatibility with existing callers.
-    It controls flagging elsewhere and does not redefine severity boundaries.
-    """
-    del threshold
-    return severity_key(score)
+    """Return the severity tier based on score and threshold."""
+    if score >= 0.90:
+        return "high"
+    elif score >= threshold:
+        return "medium"
+    else:
+        return "low"
 
 
 def tier_from_severity_label(label: str) -> str:

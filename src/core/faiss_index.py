@@ -252,3 +252,44 @@ def build_index_from_matrix(
         index.add(matrix.astype("float32"))
 
     return index
+
+
+def validate_index(index: Optional[faiss.Index], expected_count: int, expected_dimension: int = 384) -> bool:
+    """Check whether a loaded index matches the expected vector count and dimension."""
+    if index is None:
+        return False
+    try:
+        return bool(index.ntotal == expected_count and index.d == expected_dimension)
+    except Exception:
+        return False
+
+
+def load_or_rebuild_index(filepath: str) -> Tuple[faiss.Index, List[ChunkRecord], bool]:
+    """
+    Load a FAISS index from disk if valid, otherwise rebuild it from corpus.db.
+    Returns (index, registry, recovered_flag).
+    """
+    import os
+    from src.db.corpus_db import get_all_embeddings, get_chunk_registry
+
+    matrix = get_all_embeddings()
+    registry = get_chunk_registry()
+
+    n_matrix = matrix.shape[0] if (matrix is not None and matrix.size > 0) else 0
+    n_registry = len(registry)
+
+    if n_matrix != n_registry:
+        from src.errors import FAISS_EMB_REGISTRY_MISMATCH
+        raise ValueError(FAISS_EMB_REGISTRY_MISMATCH.format(emb_count=n_matrix, reg_count=n_registry))
+
+    if os.path.exists(filepath):
+        try:
+            index = load_index(filepath)
+            if validate_index(index, n_matrix, 384):
+                return index, registry, False
+        except Exception:
+            pass
+
+    index = build_index_from_matrix(matrix)
+    save_index(index, filepath)
+    return index, registry, True

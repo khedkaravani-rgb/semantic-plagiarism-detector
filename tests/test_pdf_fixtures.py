@@ -1,8 +1,7 @@
-import os
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-from src.core.document_parser import extract_text, extract_texts
+from src.core.document_parser import extract_text
 from src.api.app import app, get_expected_bearer_token
 
 client = TestClient(app)

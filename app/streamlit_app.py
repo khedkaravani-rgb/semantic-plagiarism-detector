@@ -51,7 +51,6 @@ from src.core.faiss_index import (
     search_similar_chunks,
 )
 from src.core.similarity import (
-    PLAGIARISM_THRESHOLD,
     document_similarity_matrix,
     find_most_similar_chunks,
     flag_plagiarism,
@@ -71,6 +70,14 @@ from src.db import (
     get_unique_class_sections,
     init_corpus_db,
 )
+from src.db.incidents import (  # noqa: E402
+    get_high_severity_trends,
+    get_most_plagiarized_documents,
+)
+from src.utils.pdf_report import generate_plagiarism_report  # noqa: E402
+from src.utils.badge_generator import (  # noqa: E402
+    generate_badge_png,
+    generate_badge_pdf,
 from src.db.auth import (
     disable_2fa,
     enable_2fa,
@@ -87,6 +94,29 @@ from src.utils.redis_cache import (
     cache_session_state,
     clear_session,
     get_analysis_results,
+    get_cache,
+    is_upload_rate_limited,
+    increment_upload_count,
+    get_upload_count,
+)
+from src.visualization.heatmap import (  # noqa: E402
+    plot_chunk_similarity_comparison,
+    plot_similarity_heatmap,
+)
+from src.visualization.analytics import (  # noqa: E402
+    plot_high_severity_trends,
+    plot_most_plagiarized_documents,
+)
+from src.core.document_parser import (
+    DEFAULT_OCR_DPI,
+    DEFAULT_OCR_LANGUAGE,
+    OCRDependencyError,
+    SUPPORTED_OCR_LANGUAGES,
+    extract_text,
+    normalize_ocr_settings,
+    prepare_text_for_embedding,
+    extract_pdf_metadata,
+    remove_ignore_phrases,
     get_faiss_index,
     get_session_state,
 )
@@ -122,6 +152,22 @@ _BRANDING_LOGO_PATH = os.path.abspath(
 _INDEX_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "corpus.index")
 )
+from src.utils.pdf_report import generate_plagiarism_report
+from src.db.auth import (
+    init_db,
+    verify_user,
+    get_user_role,
+    add_user,
+    get_all_users,
+    delete_user,
+    update_password,
+    get_tour_completed,
+    set_tour_completed,
+    check_login_rate_limit,
+    record_failed_login,
+    clear_login_attempts,
+)
+from streamlit_tour import Tour
 try:
     from streamlit_tour import Tour
 except ImportError:
@@ -244,8 +290,33 @@ if not st.session_state.get("authenticated", False):
 
         if login_submitted:
             username = username.strip().lower()
-
+            
             if not username or not password:
+                st.error("Please enter both username and password.")
+            else:
+                # Check rate limit before attempting authentication
+                is_allowed, error_msg = check_login_rate_limit(username)
+                if not is_allowed:
+                    st.error(error_msg)
+                elif verify_user(username, password):
+                    role = get_user_role(username)
+                    st.session_state.authenticated = True
+                    st.session_state.role = role
+                    st.session_state.username = username
+                    st.session_state.last_interaction = time.time()
+                    # Clear failed login attempts on successful login
+                    clear_login_attempts(username)
+                    # Cache session state in Redis
+                    cache_session_state(SESSION_ID, "authenticated", True)
+                    cache_session_state(SESSION_ID, "role", role)
+                    cache_session_state(SESSION_ID, "username", username)
+                    cache_session_state(SESSION_ID, "last_interaction", time.time())
+                    st.success(f"Welcome back, {role.capitalize()}!")
+                    st.rerun()
+                else:
+                    # Record failed login attempt
+                    record_failed_login(username)
+                    st.error("Invalid username or password.")
                 from src.errors import AUTH_BLANK_CREDENTIALS
                 st.error(AUTH_BLANK_CREDENTIALS)
             elif verify_user(username, password):
@@ -372,11 +443,15 @@ with st.sidebar:
     if user_role == "admin":
         threshold = st.slider(
             "Plagiarism Threshold",
-            0.50,
-            0.99,
-            value=PLAGIARISM_THRESHOLD,
+            min_value=0.0,
+            max_value=DEFAULT_THRESHOLDS.medium,
+            value=DEFAULT_THRESHOLDS.plagiarism,
             step=0.01,
-            help="Cosine similarity threshold for flagging.",
+            help=(
+                "Controls which pairs are flagged. Severity remains Medium "
+                f"at {DEFAULT_THRESHOLDS.medium:.0%} and High at "
+                f"{DEFAULT_THRESHOLDS.high:.0%}."
+            ),
             key="threshold_slider",
         )
         use_chunk_matrix = st.checkbox(
@@ -392,6 +467,23 @@ with st.sidebar:
             key="faiss_top_k_slider",
         )
 
+        with st.expander("� Ignore Phrases", expanded=False):
+            st.caption(
+                "Enter common template text or standard assignment questions to ignore during analysis. "
+                "These phrases will be removed from documents before chunking and embedding."
+            )
+            ignore_phrases = st.text_area(
+                "Ignore Phrases (one per line)",
+                placeholder="Q1: Explain the theory of relativity\nQ2: Describe the process of photosynthesis\nInstructions: Write in your own words",
+                help="Each line represents a phrase to ignore. Matching text will be removed from all documents.",
+                key="ignore_phrases_textarea",
+            )
+
+        with st.expander("� OCR Settings", expanded=False):
+            st.caption(
+                "Used only for scanned or image-only PDF pages. "
+                "Text-based PDFs continue to use native extraction."
+            )
         # ── Customizable Chunk Size & Overlap Sliders (#153) ─────────────────
         st.markdown("### ✂️ Chunking Settings")
         chunk_size = st.slider(
@@ -573,13 +665,15 @@ else:
         if faiss_index is not None:
             st.info(f"📂 Loaded existing FAISS index with {faiss_index.ntotal} vectors")
     else:
-        threshold = PLAGIARISM_THRESHOLD
+        threshold = DEFAULT_THRESHOLDS.plagiarism
         use_chunk_matrix = False
         faiss_top_k = 5
         chunk_size = 500
         chunk_overlap = 50
         ocr_language = DEFAULT_OCR_LANGUAGE
         ocr_dpi = DEFAULT_OCR_DPI
+        ignore_phrases = ""
+        st.info("ℹ️ Settings configuration is restricted to Administrators.")
 
     unique_classes = ["All Classes"] + get_unique_class_sections()
 
@@ -603,7 +697,11 @@ if (
             Tour.bind(
                 "threshold_slider",
                 title="⚙️ Plagiarism Threshold",
-                desc="Adjust similarity threshold. Recommended: 0.59",
+                desc=(
+                    "Adjust the flagging threshold. Medium severity starts "
+                    f"at {DEFAULT_THRESHOLDS.medium:.0%} and High at "
+                    f"{DEFAULT_THRESHOLDS.high:.0%}."
+                ),
                 side="right",
             ),
             Tour.bind(
@@ -664,6 +762,18 @@ if user_role != "admin":
                     faiss_index = build_index_from_matrix(
                         embeddings_matrix, index_type="auto"
                     )
+
+                    # Apply ignore phrases to query if configured
+                    processed_query = query_text.strip()
+                    if ignore_phrases and ignore_phrases.strip():
+                        processed_query = remove_ignore_phrases(processed_query, ignore_phrases)
+
+                    # Embed the query
+                    from src.core.embedding_model import embed_chunks
+
+                    query_vec = embed_chunks([processed_query])[0]
+
+                    # Search with threshold
                     from src.core.embedding_model import embed_chunks
 
                     query_vec = embed_chunks([query_text.strip()])[0]
@@ -766,6 +876,29 @@ else:
         key="file_uploader",
     )
 
+    # Check upload rate limit if files are uploaded
+    if uploaded_files:
+        username = st.session_state.get("username", "anonymous")
+        if is_upload_rate_limited(username):
+            current_count = get_upload_count(username)
+            st.error(f"Upload rate limit exceeded. Maximum 100 uploads per hour allowed. Current: {current_count}/100. Please try again later.")
+            uploaded_files = None
+        else:
+            # Increment upload counter for each file
+            for _ in uploaded_files:
+                increment_upload_count(username)
+
+    st.markdown("### 🔗 Or Paste URL")
+    url_input = st.text_input(
+        "Paste a direct URL (e.g., Wikipedia article, Medium blog post)",
+        placeholder="https://example.com/article",
+        key="url_input",
+        help="The system will fetch and extract text from the webpage for plagiarism detection."
+    )
+
+    file_bytes_dict = {
+        uploaded_file.name: uploaded_file.getvalue() for uploaded_file in uploaded_files
+    }
     # 2. GOOGLE DRIVE IMPORT SECTION (#146)
     from src.utils.google_drive import bulk_download_drive_folder
 
@@ -843,6 +976,51 @@ else:
                 file_bytes_dict[f.name] = f.read()
             f.seek(0)
 
+    # Allow analysis with existing index even without new uploads
+    # Also allow URL input as an alternative to file uploads
+    url_text = None
+    url_filename = None
+    
+    if url_input and url_input.strip():
+        try:
+            from src.core.document_parser import extract_text_from_url
+            with st.spinner("🔍 Fetching and extracting text from URL..."):
+                url_text = extract_text_from_url(url_input.strip())
+                if not url_text or len(url_text.strip()) < 50:
+                    st.warning("⚠️ The URL did not contain enough text content for analysis.")
+                    url_text = None
+                else:
+                    # Generate a filename from the URL
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url_input.strip())
+                    url_filename = f"webpage_{parsed.netloc.replace('.', '_')}.txt"
+                    st.success(f"✅ Successfully extracted {len(url_text)} characters from the webpage.")
+        except Exception as e:
+            st.error(f"❌ Failed to fetch URL: {str(e)}")
+            url_text = None
+    
+    # Check if we have enough content (either files or URL)
+    has_files = uploaded_files and len(uploaded_files) >= 2
+    has_url = url_text is not None
+    
+    if not has_files and not has_url:
+        if st.session_state.analysis_results is None:
+            st.info("👆 Please upload **at least 2** PDF assignment files or paste a URL to begin.")
+            st.stop()
+        else:
+            st.success(
+                f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents"
+            )
+            # Skip to analysis section with existing index
+            file_bytes_dict = {}
+            raw_texts = {}
+            chunked_docs = {}
+            embeddings = {}
+            sim_df = None
+            chunk_sim_df = None
+            # We'll need to handle this case differently for the analysis
+            st.warning(
+                "⚠️ Full similarity matrix requires re-uploading files. FAISS search is available with existing index."
     if st.session_state.drive_files_dict:
         file_bytes_dict.update(st.session_state.drive_files_dict)
 
@@ -858,6 +1036,12 @@ else:
                 unsafe_allow_html=True,
             )
             st.stop()
+
+    if not has_files and not has_url:
+        st.info(
+            "👆 Please upload **at least 2** PDF, DOCX, or TXT assignment files or paste a URL to begin."
+        )
+        st.stop()
 
     # ── Metadata Editor Section ──────────────────────────────────────────────────
     st.markdown("### 📝 Set Document Metadata")
@@ -903,6 +1087,29 @@ else:
                 "class_section": class_section.strip(),
                 "assignment_title": assignment_title.strip(),
             }
+    
+    # Add metadata for URL input if provided
+    if url_filename:
+        with st.expander(f"🔗 {url_filename}", expanded=True):
+            student_name = st.text_input(
+                f"Student Name for {url_filename}",
+                value="Web Source",
+                key=f"student_{url_filename}",
+            )
+            class_section = st.text_input(
+                f"Class/Section for {url_filename}", value=batch_class, key=f"class_{url_filename}"
+            )
+            assignment_title = st.text_input(
+                f"Assignment Title for {url_filename}",
+                value=batch_assignment,
+                key=f"assignment_{url_filename}",
+            )
+
+            metadata_dict[url_filename] = {
+                "student_name": student_name.strip(),
+                "class_section": class_section.strip(),
+                "assignment_title": assignment_title.strip(),
+            }
 
     # ── Pipeline Execution ────────────────────────────────────────────────────────
     @st.cache_data(show_spinner=False)
@@ -910,9 +1117,39 @@ else:
         file_bytes_dict: dict[str, bytes],
         ocr_language: str,
         ocr_dpi: int,
+        existing_index=None,
+        existing_registry=None,
+        url_text: str = None,
+        url_filename: str = None,
     ):
         raw_texts = {}
         for name, data in file_bytes_dict.items():
+            try:
+                raw_texts[name] = extract_text(
+                    _io.BytesIO(data),
+                    name,
+                    ocr_language=ocr_language,
+                    ocr_dpi=ocr_dpi,
+                )
+            except OCRDependencyError as exc:
+                failed_files.append(name)
+                failure_details.append(f"{name}: {exc}")
+
+        # Add URL text if provided
+        if url_text and url_filename:
+            raw_texts[url_filename] = url_text
+
+        if failed_files:
+            raise OCRFileBatchError(failed_files, failure_details)
+
+        # Apply ignore phrases to raw texts before chunking
+        if ignore_phrases and ignore_phrases.strip():
+            raw_texts = {
+                name: remove_ignore_phrases(text, ignore_phrases)
+                for name, text in raw_texts.items()
+            }
+
+        # Original chunks are preserved for UI display.
             raw_texts[name] = extract_text(
                 _io.BytesIO(data),
                 name,
@@ -1027,6 +1264,8 @@ else:
     col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
 
+    # ── Tabs ──────────────────────────────────────────────────────────────────────
+    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_analytics, tab_users = st.tabs(
     # ── Application Tabs ──────────────────────────────────────────────────────
     tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
         [
@@ -1035,6 +1274,7 @@ else:
             "📋 Similarity Matrix",
             "🗺️ Heatmap",
             "🔬 Pair Drill-Down",
+            "📊 Analytics",
             "👥 User Management",
         ]
     )
@@ -1087,11 +1327,17 @@ else:
         else:
 
             def _highlight(val: Any) -> str:
-                numeric_val = float(val)
-                if numeric_val >= 0.90:
-                    return "background-color:#ff4b4b;color:white;font-weight:bold;"
-                elif numeric_val >= threshold:
-                    return "background-color:#ffa500;color:white;font-weight:bold;"
+                tier = severity_key(float(val))
+                if tier == "high":
+                    return (
+                        "background-color:#ff4b4b;color:white;"
+                        "font-weight:bold;"
+                    )
+                if tier == "medium":
+                    return (
+                        "background-color:#ffa500;color:white;"
+                        "font-weight:bold;"
+                    )
                 return ""
 
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
@@ -1279,6 +1525,50 @@ else:
             else:
                 st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
+    # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
+    with tab_analytics:
+        st.subheader("📊 Plagiarism Analytics Dashboard")
+        st.caption(
+            "Track plagiarism trends and identify frequently plagiarized documents across all classes."
+        )
+        
+        # Sync current flags to incidents database before displaying analytics
+        if flags:
+            from src.db.incidents import sync_flagged_incidents
+            sync_flagged_incidents(flags)
+        
+        st.divider()
+        
+        # High Severity Trends Chart
+        st.subheader("📈 High Severity Plagiarism Trends (Last 30 Days)")
+        trend_data = get_high_severity_trends(days=30)
+        trend_fig = plot_high_severity_trends(trend_data)
+        st.plotly_chart(trend_fig, use_container_width=True)
+        
+        st.divider()
+        
+        # Most Plagiarized Documents Chart
+        st.subheader("🔝 Most Frequently Plagiarized Documents")
+        doc_data = get_most_plagiarized_documents(limit=10)
+        doc_fig = plot_most_plagiarized_documents(doc_data)
+        st.plotly_chart(doc_fig, use_container_width=True)
+        
+        st.divider()
+        
+        # Summary statistics
+        st.subheader("📋 Analytics Summary")
+        if trend_data:
+            total_high_severity = sum(item['count'] for item in trend_data)
+            st.metric("Total High Severity Incidents (30 days)", total_high_severity)
+        else:
+            st.info("No high severity incidents recorded in the last 30 days.")
+        
+        if doc_data:
+            st.metric("Most Plagiarized Document", f"{doc_data[0]['document_name']} ({doc_data[0]['incident_count']} incidents)")
+        else:
+            st.info("No plagiarism incidents recorded.")
+
+    # ══ TAB 7: User Management ═══════════════════════════════════════════════════
     # ══ TAB 6: USERS ══════════════════════════════════════════════════════════
     with tab_users:
         st.subheader("👥 User Management")

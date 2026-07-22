@@ -1,4 +1,4 @@
-from .auth import (
+from .auth import ( 
     add_user,
     delete_user,
     disable_2fa,
@@ -49,3 +49,28 @@ __all__ = [
     "get_unique_class_sections",
     "get_documents_by_class",
 ]
+
+ 
+from .migrations import (    # noqa: F401
+    AUTH_SCHEMA_VERSION as AUTH_SCHEMA_VERSION,
+    CORPUS_SCHEMA_VERSION as CORPUS_SCHEMA_VERSION,
+    column_exists as column_exists,
+    get_user_version as get_user_version,
+    index_exists as index_exists,
+    migrate_auth_database as migrate_auth_database,
+    migrate_corpus_database as migrate_corpus_database,
+    table_exists as table_exists,
+)
+
+__all__.extend(
+    [
+        "AUTH_SCHEMA_VERSION",
+        "CORPUS_SCHEMA_VERSION",
+        "column_exists",
+        "get_user_version",
+        "index_exists",
+        "migrate_auth_database",
+        "migrate_corpus_database",
+        "table_exists",
+    ]
+)

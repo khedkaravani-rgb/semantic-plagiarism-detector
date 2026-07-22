@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
-
+from src.db.incidents import get_false_positives, add_false_positive, _normalise_pair
 import pandas as pd
 import streamlit as st
 
@@ -169,8 +169,13 @@ def render_warning_controls(
         st.session_state.warning_page = 1
 
     st.caption(f"Pairs with similarity ≥ **{threshold:.2f}**")
+    dismissed_pairs = get_false_positives()
+    filtered_flags = [
+        f for f in flags 
+        if _normalise_pair(f['doc_a'], f['doc_b']) not in dismissed_pairs
+    ]
 
-    if not flags:
+    if not filtered_flags:
         st.success("✅ No suspicious pairs found above the current threshold.")
         return
 
@@ -222,7 +227,7 @@ def render_warning_controls(
         )
 
     sorted_flags, current_page = prepare_warning_page(
-        flags,
+        filtered_flags,
         search_query=search_query,
         primary_field=SORT_FIELDS[primary_label],
         primary_descending=primary_direction == "Descending",
@@ -269,7 +274,7 @@ def render_warning_controls(
     for flag in current_page.items:
         tier = tier_from_severity_label(flag["severity"])
         with st.container(border=True):
-            c1, c2 = st.columns([3, 1])
+            c1, c2, c3 = st.columns([3, 1, 1])
             with c1:
                 st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
                 st.progress(
@@ -291,6 +296,10 @@ def render_warning_controls(
                     f"<div style='text-align:right;'>{badge_html(tier, flag['severity'])}</div>",
                     unsafe_allow_html=True,
                 )
+            with c3:
+                if st.button("Dismiss", key=f"dismiss_{flag['doc_a']}_{flag['doc_b']}"):
+                    add_false_positive(flag['doc_a'], flag['doc_b'])
+                    st.rerun()
 
     if current_page.total_items == 0:
         return

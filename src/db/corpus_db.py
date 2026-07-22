@@ -30,6 +30,52 @@ def _connect() -> sqlite3.Connection:
 def init_corpus_db() -> None:
     """Create or upgrade corpus.db without deleting persisted data."""
     with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename         TEXT    UNIQUE NOT NULL,
+                file_hash        TEXT    UNIQUE NOT NULL,
+                upload_date      TEXT    NOT NULL,
+                class_section    TEXT,
+                student_name     TEXT,
+                assignment_title TEXT,
+                pdf_author       TEXT,
+                pdf_creation_date TEXT,
+                pdf_title        TEXT
+            )
+        """
+        )
+
+        # Schema migration fallback logic: add missing columns if documents table already existed
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "class_section" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN class_section TEXT")
+        if "student_name" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN student_name TEXT")
+        if "assignment_title" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN assignment_title TEXT")
+        if "pdf_author" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_author TEXT")
+        if "pdf_creation_date" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_creation_date TEXT")
+        if "pdf_title" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_title TEXT")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunks (
+                vector_id    INTEGER PRIMARY KEY,
+                filename     TEXT    NOT NULL,
+                chunk_index  INTEGER NOT NULL,
+                chunk_text   TEXT    NOT NULL,
+                embedding    BLOB    NOT NULL,
+                FOREIGN KEY (filename) REFERENCES documents(filename) ON DELETE CASCADE
+            )
+        """
+        )
+        conn.commit()
         migrate_corpus_database(conn)
 
 
@@ -39,6 +85,9 @@ def add_document(
     class_section: str = None,
     student_name: str = None,
     assignment_title: str = None,
+    pdf_author: str = None,
+    pdf_creation_date: str = None,
+    pdf_title: str = None,
 ) -> bool:
     """
     Insert a new document metadata row.
@@ -47,7 +96,7 @@ def add_document(
     try:
         with _connect() as conn:
             conn.execute(
-                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     filename,
                     file_hash,
@@ -55,6 +104,9 @@ def add_document(
                     class_section,
                     student_name,
                     assignment_title,
+                    pdf_author,
+                    pdf_creation_date,
+                    pdf_title,
                 ),
             )
             conn.commit()
@@ -76,7 +128,7 @@ def get_all_documents() -> list:
     """Return all indexed documents sorted by upload date descending."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT filename, file_hash, upload_date, class_section, student_name, assignment_title FROM documents ORDER BY upload_date DESC"
+            "SELECT filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title FROM documents ORDER BY upload_date DESC"
         ).fetchall()
     return [
         {
@@ -86,6 +138,9 @@ def get_all_documents() -> list:
             "class_section": r[3],
             "student_name": r[4],
             "assignment_title": r[5],
+            "pdf_author": r[6],
+            "pdf_creation_date": r[7],
+            "pdf_title": r[8],
         }
         for r in rows
     ]

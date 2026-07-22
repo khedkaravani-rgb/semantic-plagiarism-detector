@@ -114,6 +114,7 @@ from src.core.document_parser import (
     extract_text,
     normalize_ocr_settings,
     prepare_text_for_embedding,
+    extract_pdf_metadata,
     get_faiss_index,
     get_session_state,
 )
@@ -909,6 +910,44 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Semantic Plagiarism Detector · FAISS edition")
 
+    # Document management (admin only)
+    if user_role == "admin":
+        st.markdown("### 📁 Document Management")
+        existing_docs = get_all_documents()
+        if existing_docs:
+            st.write(f"**{len(existing_docs)}** documents in database")
+            for doc in existing_docs:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text(f"📄 {doc['filename']}")
+                    # Display PDF metadata if available
+                    if doc.get('pdf_author') or doc.get('pdf_creation_date'):
+                        metadata_parts = []
+                        if doc.get('pdf_author'):
+                            metadata_parts.append(f"Author: {doc['pdf_author']}")
+                        if doc.get('pdf_creation_date'):
+                            metadata_parts.append(f"Date: {doc['pdf_creation_date']}")
+                        if doc.get('pdf_title'):
+                            metadata_parts.append(f"Title: {doc['pdf_title']}")
+                        st.caption(" | ".join(metadata_parts))
+                with col2:
+                    if st.button("🗑️", key=f"del_{doc['filename']}"):
+                        delete_document(doc["filename"])
+                        # Rebuild FAISS index from remaining embeddings
+                        embeddings_matrix = get_all_embeddings()
+                        if embeddings_matrix.size > 0:
+                            new_index = build_index_from_matrix(embeddings_matrix)
+                            save_index(new_index, _INDEX_PATH)
+                        else:
+                            # No embeddings left, remove the index file
+                            if os.path.exists(_INDEX_PATH):
+                                os.remove(_INDEX_PATH)
+                        st.rerun()
+        else:
+            st.info("No documents in database")
+        st.markdown("---")
+
+    # Log out button
     st.markdown("---")
     if st.button("🚪 Log Out", use_container_width=True, key="logout_button"):
         for key in ["authenticated", "username", "role", "last_interaction"]:
@@ -1548,12 +1587,17 @@ else:
                 doc_name,
                 {"student_name": "", "class_section": "", "assignment_title": ""},
             )
+            # Extract PDF metadata
+            pdf_metadata = extract_pdf_metadata(file_info["data"])
             add_document(
                 doc_name,
                 file_info["hash"],
                 class_section=meta["class_section"],
                 student_name=meta["student_name"],
                 assignment_title=meta["assignment_title"],
+                pdf_author=pdf_metadata.get("author"),
+                pdf_creation_date=pdf_metadata.get("creation_date"),
+                pdf_title=pdf_metadata.get("title"),
             )
 
         # If an index already exists, append the new vectors.

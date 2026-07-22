@@ -9,16 +9,18 @@ Uses cosine similarity. Since embeddings are L2-normalised in embedding_model.py
 cosine similarity reduces to the dot product, making this very fast.
 """
 
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import Dict, List, Optional, Tuple
 
-# ── Threshold ──────────────────────────────────────────────────────────────────
-# Empirically determined optimal value via evaluation/evaluate.py (F1 = 1.0).
-# Previous arbitrary default was 0.75; data-driven analysis found 0.59 to be
-# the lowest threshold achieving perfect precision AND recall on the benchmark.
-PLAGIARISM_THRESHOLD = 0.59
+from src.core.config import (
+    DEFAULT_THRESHOLDS,
+    PLAGIARISM_THRESHOLD,
+    is_plagiarism,
+    severity_from_score,
+)
 
 
 # ── Validation helpers ─────────────────────────────────────────────────────────
@@ -26,18 +28,19 @@ PLAGIARISM_THRESHOLD = 0.59
 
 def _validated_batch_size(batch_size: Optional[int]) -> Optional[int]:
     """Return a safe integer batch size or None for unbatched execution."""
+    from src.errors import SIM_BATCH_SIZE_INVALID
     if batch_size is None:
         return None
     if isinstance(batch_size, bool):
-        raise ValueError("batch_size must be an integer")
+        raise ValueError(SIM_BATCH_SIZE_INVALID)
     if isinstance(batch_size, (float, np.floating)):
         if not float(batch_size).is_integer():
-            raise ValueError("batch_size must be an integer")
+            raise ValueError(SIM_BATCH_SIZE_INVALID)
         batch_size = int(batch_size)
     try:
         size = int(batch_size)
     except (TypeError, ValueError) as exc:
-        raise ValueError("batch_size must be an integer") from exc
+        raise ValueError(SIM_BATCH_SIZE_INVALID) from exc
     return size if size > 0 else None
 
 
@@ -115,17 +118,16 @@ def hybrid_similarity_matrix(
         hybrid_score = w * semantic + (1 - w) * lexical
     """
     if not (0.0 <= w <= 1.0):
-        raise ValueError(f"Weight w must be between 0.0 and 1.0, got {w}")
+        from src.errors import SIM_WEIGHT_OUT_OF_RANGE
+        raise ValueError(SIM_WEIGHT_OUT_OF_RANGE.format(w=w))
 
     # Ensure both DataFrames have the same shape and index/columns
     if semantic_df.shape != lexical_df.shape:
-        raise ValueError("Semantic and lexical matrices must have the same shape")
-    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(
-        lexical_df.columns
-    ):
-        raise ValueError(
-            "Semantic and lexical matrices must have the same index and columns"
-        )
+        from src.errors import SIM_SHAPE_MISMATCH
+        raise ValueError(SIM_SHAPE_MISMATCH)
+    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(lexical_df.columns):
+        from src.errors import SIM_INDEX_MISMATCH
+        raise ValueError(SIM_INDEX_MISMATCH)
 
     hybrid_df = w * semantic_df + (1 - w) * lexical_df
     return hybrid_df
@@ -218,42 +220,35 @@ def chunk_similarity_matrix(
 
 
 def flag_plagiarism(
-    similarity_df: pd.DataFrame, threshold: float = PLAGIARISM_THRESHOLD
+    similarity_df: pd.DataFrame,
+    threshold: float = PLAGIARISM_THRESHOLD,
 ) -> List[Dict]:
-    """
-    Identify document pairs whose similarity exceeds the threshold.
+    """Identify document pairs whose similarity reaches the threshold.
 
-    Args:
-        similarity_df: Symmetric similarity DataFrame (doc × doc).
-        threshold:     Minimum similarity to flag (default: 0.75).
-
-    Returns:
-        List of dicts, each containing:
-          - doc_a     : Name of first document
-          - doc_b     : Name of second document
-          - similarity: Cosine similarity score (float)
-          - severity  : "High" (≥0.90) | "Medium" (≥0.75)
+    Flagging uses the configurable plagiarism threshold. Severity uses the
+    central fixed boundaries: Medium at 0.75 and High at 0.90.
     """
     flags = []
     doc_names = similarity_df.columns.tolist()
-    n = len(doc_names)
 
-    for i in range(n):
-        for j in range(i + 1, n):  # Upper triangle only (avoid duplicates)
-            score = similarity_df.iloc[i, j]
-            if score >= threshold:
-                severity = "🔴 High" if score >= 0.90 else "🟡 Medium"
+    for i in range(len(doc_names)):
+        for j in range(i + 1, len(doc_names)):
+            score = float(similarity_df.iloc[i, j])
+
+            if is_plagiarism(score, threshold):
                 flags.append(
                     {
                         "doc_a": doc_names[i],
                         "doc_b": doc_names[j],
-                        "similarity": round(float(score), 4),
-                        "severity": severity,
+                        "similarity": round(score, 4),
+                        "severity": severity_from_score(
+                            score,
+                            DEFAULT_THRESHOLDS,
+                        ),
                     }
                 )
 
-    # Sort by similarity descending
-    flags.sort(key=lambda x: x["similarity"], reverse=True)
+    flags.sort(key=lambda item: item["similarity"], reverse=True)
     return flags
 
 

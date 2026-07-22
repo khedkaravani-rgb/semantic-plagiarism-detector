@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from src.db.migrations import migrate_corpus_database
+
 from src.core.config import (
     normalize_score,
     normalize_severity_label,
@@ -61,32 +63,19 @@ def build_incident_id(doc_a: str, doc_b: str) -> str:
     return f"INC-{digest[:12].upper()}"
 
 
-def init_incident_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
+def init_incident_db(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> None:
+    """Create or upgrade the shared corpus/incident database."""
     with closing(sqlite3.connect(str(db_path))) as conn:
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS plagiarism_incidents (
-                    incident_id TEXT PRIMARY KEY,
-                    document_a TEXT NOT NULL,
-                    document_b TEXT NOT NULL,
-                    similarity_score REAL NOT NULL,
-                    severity_rank TEXT NOT NULL,
-                    review_status TEXT NOT NULL DEFAULT 'Pending'
-                        CHECK (review_status IN ('Pending', 'Resolved')),
-                    date_flagged TEXT NOT NULL,
-                    last_seen TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_incidents_status "
-                "ON plagiarism_incidents(review_status)"
-            )
-            conn.commit()
-        except sqlite3.Error as e:
+            conn.execute("PRAGMA foreign_keys = ON")
+            migrate_corpus_database(conn)
+        except sqlite3.Error as exc:
             conn.rollback()
-            raise sqlite3.Error(f"Failed to initialize incident database: {e}") from e
+            raise sqlite3.Error(
+                f"Failed to initialize incident database: {exc}"
+            ) from exc
 
 
 def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:

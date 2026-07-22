@@ -1,0 +1,88 @@
+"""Versioned migrations for users.db."""
+
+from __future__ import annotations
+
+import sqlite3
+
+from .common import column_exists, run_migrations
+
+
+AUTH_SCHEMA_VERSION = 4
+
+
+def migration_001_create_users(
+    connection: sqlite3.Connection,
+) -> None:
+    """Create the original authentication table."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role     TEXT NOT NULL DEFAULT 'teacher'
+        )
+        """
+    )
+
+
+def migration_002_add_onboarding_state(
+    connection: sqlite3.Connection,
+) -> None:
+    """Add onboarding completion state."""
+    if not column_exists(connection, "users", "tour_completed"):
+        connection.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN tour_completed INTEGER NOT NULL DEFAULT 0
+            """
+        )
+
+
+def migration_003_add_two_factor_fields(
+    connection: sqlite3.Connection,
+) -> None:
+    """Add optional TOTP secret and enablement fields."""
+    if not column_exists(connection, "users", "otp_secret"):
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN otp_secret TEXT DEFAULT NULL"
+        )
+
+    if not column_exists(connection, "users", "two_factor_enabled"):
+        connection.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0
+            """
+        )
+
+
+def migration_004_add_role_index(
+    connection: sqlite3.Connection,
+) -> None:
+    """Add an index used by role-based administration queries."""
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_users_role
+        ON users(role)
+        """
+    )
+
+
+AUTH_MIGRATIONS = {
+    1: migration_001_create_users,
+    2: migration_002_add_onboarding_state,
+    3: migration_003_add_two_factor_fields,
+    4: migration_004_add_role_index,
+}
+
+
+def migrate_auth_database(
+    connection: sqlite3.Connection,
+) -> int:
+    """Upgrade users.db to the latest supported schema version."""
+    return run_migrations(
+        connection,
+        migrations=AUTH_MIGRATIONS,
+        target_version=AUTH_SCHEMA_VERSION,
+    )

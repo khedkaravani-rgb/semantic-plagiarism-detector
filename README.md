@@ -470,6 +470,30 @@ the Medium or High severity bands.
 Scores outside `[0.0, 1.0]` are clamped for consistent presentation. Invalid
 non-numeric, NaN, or infinite values are rejected.
 
+
+## Versioned SQLite schema migrations
+
+`users.db` and `corpus.db` are upgraded automatically using SQLite
+`PRAGMA user_version`.
+
+Migration definitions live in:
+
+```text
+src/db/migrations/auth.py
+src/db/migrations/corpus.py
+src/db/migrations/common.py
+```
+
+Each upgrade:
+
+1. reads the current schema version,
+2. applies every missing migration in order,
+3. runs inside a rollback-safe savepoint,
+4. updates `PRAGMA user_version` only after all migrations succeed,
+5. preserves existing users, documents, chunks, embeddings, and incidents.
+
+Existing database files should not be deleted during an application upgrade.
+
 ---
 
 ## 📄 License

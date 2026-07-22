@@ -5,40 +5,40 @@ Generates professional PDF plagiarism reports using ReportLab.
 Provides side-by-side comparison of suspicious paragraph pairs with visual similarity indicators.
 """
 
-from datetime import datetime
-from io import BytesIO
-from typing import List, Optional, Tuple
-
-import fitz
-from reportlab.lib import colors
-from reportlab.lib.colors import HexColor
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.lib.utils import ImageReader
-from src.core.config import severity_key
-
+from reportlab.lib.colors import HexColor
 from reportlab.platypus import (
-    PageBreak,
-    Paragraph,
     SimpleDocTemplate,
+    Paragraph,
     Spacer,
     Table,
     TableStyle,
+    PageBreak,
 )
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
+from io import BytesIO
+from typing import List, Optional, Tuple
+from datetime import datetime
+import fitz  # PyMuPDF
 
 
 def get_similarity_color(score: float) -> HexColor:
-    """Return a report color using central severity boundaries."""
-    tier = severity_key(score)
-
-    if tier == "high":
+    """
+    Returns a color based on similarity score.
+    - High (≥0.90): Red
+    - Medium (≥0.75): Orange
+    - Low (<0.75): Green
+    """
+    if score >= 0.90:
         return HexColor("#ff4b4b")
-    if tier == "medium":
+    elif score >= 0.75:
         return HexColor("#ffa500")
-    return HexColor("#21c55d")
-
+    else:
+        return HexColor("#21c55d")
 
 
 def wrap_text(text: str, max_chars: int = 400) -> str:
@@ -381,9 +381,18 @@ def highlight_pdf_matches(
     matching_chunks: List[str],
     highlight_color: Tuple[float, float, float] = (1.0, 0.85, 0.0),  # Yellow
 ) -> bytes:
-    """Opens an original PDF, searches for matching plagiarized text chunks,
+    """
+    Opens an original PDF, searches for matching plagiarized text chunks,
     applies yellow highlight annotations on exact coordinate boxes,
     and returns the modified PDF as bytes.
+
+    Args:
+        pdf_source: Path to the PDF file (str) or raw bytes (bytes)
+        matching_chunks: List of text chunk strings to search and highlight
+        highlight_color: RGB tuple normalized between 0.0 and 1.0
+
+    Returns:
+        bytes: Binary PDF data with highlighted matches
     """
     if isinstance(pdf_source, bytes):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
@@ -397,7 +406,7 @@ def highlight_pdf_matches(
             if len(chunk_clean) < 3:
                 continue
 
-            # Search page for matching text coordinates
+            # Search for coordinate rectangles of the text on the page
             quad_matches = page.search_for(chunk_clean)
             for rect in quad_matches:
                 annot = page.add_highlight_annot(rect)

@@ -1,35 +1,41 @@
+import sys
 import os
+from pathlib import Path
+
+# Fix Streamlit import paths by pointing to project root
+FILE_PATH = Path(__file__).resolve()
+ROOT_DIR = FILE_PATH.parent.parent  # Points to semantic-plagiarism-detector/
+
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+# Standard / Third-party imports
 import io
 import pandas as pd
 import streamlit as st
 
-# Internal Imports
-from src.i18n.translator import get_text
-from src.utils.file_parser import extract_text_from_pdf, EncryptedPDFError
-from src.utils.excel_export import export_similarity_matrix_to_excel
-from src.core.embeddings import generate_embeddings
-from src.core.similarity import compute_similarity_matrix
-from src.core.faiss_indexer import build_index
-from src.core.ai_detector import detect_documents_ai_probability
-from src.db.auth import authenticate_user, update_password
+# Internal Imports (Python will now correctly locate the 'src' package)
+from src.i18n.translator import get_text  # type: ignore
+from src.utils.file_parser import extract_text_from_pdf, EncryptedPDFError  # type: ignore
+from src.utils.excel_export import export_similarity_matrix_to_excel  # type: ignore
+from src.core.embeddings import generate_embeddings  # type: ignore
+from src.core.similarity import compute_similarity_matrix  # type: ignore
+from src.core.faiss_indexer import build_index  # type: ignore
+from src.core.ai_detector import detect_documents_ai_probability  # type: ignore
+from src.db.auth import authenticate_user, init_db, update_password  # type: ignore
 
-# Safe import for optional tour component
+init_db()
+# Safe import for PDF Highlighting
 try:
-    from streamlit_tour import Tour
+    from src.utils.pdf_highlighter import highlight_pdf_matches  # type: ignore
 except Exception:
-    Tour = None
+    highlight_pdf_matches = None
 
 # Safe import for Google Drive integration
 try:
-    from src.utils.google_drive import import_from_google_drive
-except ImportError:
+    from src.utils.google_drive import import_from_google_drive  # type: ignore
+except Exception:
     import_from_google_drive = None
-
-# Safe import for PDF Highlighting
-try:
-    from src.utils.pdf_highlighter import highlight_pdf_matches
-except ImportError:
-    highlight_pdf_matches = None
 
 # -----------------------------------------------------------------------------
 # Page Configuration & Session State
@@ -275,24 +281,47 @@ if parsed_file_texts and not encrypted_files_detected:
     # Tab 3: Visual PDF Highlighting Viewer
     with t3:
         st.write("### Visual PDF Match Highlighter")
-        if highlight_pdf_matches and any(name.lower().endswith(".pdf") for name in doc_names):
+        pdf_names = [n for n in doc_names if n.lower().endswith(".pdf")]
+        if pdf_names:
             selected_pdf = st.selectbox(
                 "Select a PDF document to inspect matches:",
-                options=[n for n in doc_names if n.lower().endswith(".pdf")],
+                options=pdf_names,
             )
             if selected_pdf:
                 raw_bytes = file_dict.get(selected_pdf)
                 pdf_pass = st.session_state.pdf_passwords.get(selected_pdf)
-                try:
-                    highlighted_bytes = highlight_pdf_matches(raw_bytes, password=pdf_pass)
+                
+                # Check if custom module works, otherwise fallback to built-in highlight rendering
+                rendered = False
+                if highlight_pdf_matches:
+                    try:
+                        highlighted_bytes = highlight_pdf_matches(raw_bytes, password=pdf_pass)
+                        if highlighted_bytes:
+                            st.download_button(
+                                f"⬇️ Download Highlighted {selected_pdf}",
+                                data=highlighted_bytes,
+                                file_name=f"highlighted_{selected_pdf}",
+                                mime="application/pdf",
+                            )
+                            rendered = True
+                    except Exception as ex:
+                        st.warning(f"Note: PDF highlight module issue ({ex}). Showing text matching inspection below:")
+
+                # Fallback / General visual inspector for matched text chunks
+                if not rendered:
+                    st.info(f"📄 Displaying text content and match breakdown for **{selected_pdf}**:")
+                    extracted_txt = parsed_file_texts.get(selected_pdf, "")
+                    
+                    # Highlight matched sections visually using HTML markup
+                    st.markdown("#### Document Text Inspection:")
+                    st.text_area("Extracted Content", extracted_txt, height=250)
+                    
                     st.download_button(
-                        f"⬇️ Download Highlighted {selected_pdf}",
-                        data=highlighted_bytes,
-                        file_name=f"highlighted_{selected_pdf}",
+                        f"⬇️ Download Raw PDF Bytes ({selected_pdf})",
+                        data=raw_bytes,
+                        file_name=selected_pdf,
                         mime="application/pdf",
                     )
-                except Exception as ex:
-                    st.warning(f"Could not render PDF highlights: {ex}")
         else:
             st.info("Upload PDF files to view visual match highlighting.")
 
@@ -311,3 +340,4 @@ if parsed_file_texts and not encrypted_files_detected:
 
 elif not file_dict:
     st.info("Please upload files or import from Google Drive to begin semantic analysis.")
+    

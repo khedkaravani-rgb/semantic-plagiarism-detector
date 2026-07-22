@@ -9,6 +9,12 @@ from typing import Any, Iterable, Mapping, Sequence
 import pandas as pd
 import streamlit as st
 
+from app.theme import badge_html, tier_from_severity_label
+from src.core.config import (
+    normalize_severity_label,
+    severity_from_score,
+    severity_rank,
+)
 
 SORT_FIELDS = {
     "Similarity": "similarity",
@@ -29,21 +35,19 @@ class WarningPage:
     end_index: int
 
 
-def _normalise_warning(warning: Mapping[str, Any]) -> dict[str, Any]:
-    severity = str(warning.get("severity", "")).strip()
-    severity_key = severity.lower()
-
-    if "high" in severity_key:
-        severity_rank = 2
-    elif "medium" in severity_key:
-        severity_rank = 1
-    else:
-        severity_rank = 0
-
+def _normalise_warning(
+    warning: Mapping[str, Any],
+) -> dict[str, Any]:
     try:
         similarity = float(warning.get("similarity", 0.0))
     except (TypeError, ValueError):
         similarity = 0.0
+
+    raw_severity = str(warning.get("severity", "")).strip()
+    try:
+        severity = normalize_severity_label(raw_severity)
+    except ValueError:
+        severity = severity_from_score(similarity)
 
     return {
         **dict(warning),
@@ -51,7 +55,7 @@ def _normalise_warning(warning: Mapping[str, Any]) -> dict[str, Any]:
         "doc_b": str(warning.get("doc_b", "")).strip(),
         "similarity": similarity,
         "severity": severity,
-        "severity_rank": severity_rank,
+        "severity_rank": severity_rank(severity),
     }
 
 
@@ -153,15 +157,6 @@ def prepare_warning_page(
 
 def _reset_page() -> None:
     st.session_state.warning_page = 1
-
-
-def _severity_badge(severity: str) -> tuple[str, str]:
-    value = severity.lower()
-    if "high" in value:
-        return "#ff4b4b", severity or "High"
-    if "medium" in value:
-        return "#ffa500", severity or "Medium"
-    return "#6c757d", severity or "Low"
 
 
 def render_warning_controls(
@@ -272,7 +267,7 @@ def render_warning_controls(
         )
 
     for flag in current_page.items:
-        color, severity_text = _severity_badge(flag["severity"])
+        tier = tier_from_severity_label(flag["severity"])
         with st.container(border=True):
             c1, c2 = st.columns([3, 1])
             with c1:
@@ -281,11 +276,11 @@ def render_warning_controls(
                     min(1.0, max(0.0, float(flag["similarity"]))),
                     text=f"Similarity: {flag['similarity'] * 100:.1f}%",
                 )
-                
+
                 # Display AI probabilities if available
                 if ai_probabilities:
-                    ai_a = ai_probabilities.get(flag['doc_a'], {}).get('overall', 0.0)
-                    ai_b = ai_probabilities.get(flag['doc_b'], {}).get('overall', 0.0)
+                    ai_a = ai_probabilities.get(flag["doc_a"], {}).get("overall", 0.0)
+                    ai_b = ai_probabilities.get(flag["doc_b"], {}).get("overall", 0.0)
                     if ai_a > 0 or ai_b > 0:
                         st.caption(
                             f"🤖 AI Prob: {flag['doc_a']}: {ai_a:.1%} | "
@@ -293,12 +288,7 @@ def render_warning_controls(
                         )
             with c2:
                 st.markdown(
-                    (
-                        "<div style='text-align:center;padding:8px;"
-                        f"border-radius:8px;background:{color};color:white;"
-                        "font-weight:bold;'>"
-                        f"{severity_text}</div>"
-                    ),
+                    f"<div style='text-align:right;'>{badge_html(tier, flag['severity'])}</div>",
                     unsafe_allow_html=True,
                 )
 

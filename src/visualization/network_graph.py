@@ -5,16 +5,19 @@ Generates interactive document plagiarism network graphs using networkx and Plot
 Documents are represented as nodes, and similarities above the threshold are edges.
 """
 
+from typing import Optional
+
 import networkx as nx
-import plotly.graph_objects as go
-import pandas as pd
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 
 
 def plot_similarity_network(
     similarity_df: pd.DataFrame,
     threshold: float = 0.59,
     title: str = "Document Plagiarism Network",
+    theme_colors: Optional[dict] = None,
 ) -> go.Figure:
     """
     Builds a networkx graph from the similarity matrix and returns an interactive Plotly figure.
@@ -71,11 +74,11 @@ def plot_similarity_network(
 
         # Color based on severity
         if score >= 0.90:
-            color = "#ff4b4b"  # High (Red)
+            color = theme_colors["danger"] if theme_colors else "#ff4b4b"  # High
         elif score >= 0.75:
-            color = "#ffa500"  # Medium (Orange)
+            color = theme_colors["warning"] if theme_colors else "#ffa500"  # Medium
         else:
-            color = "#ffd700"  # Low-moderate above threshold (Yellow)
+            color = theme_colors["success"] if theme_colors else "#21c55d"  # Low
 
         shapes.append(
             dict(
@@ -138,11 +141,17 @@ def plot_similarity_network(
 
         # Color based on degree
         if deg == 0:
-            node_color.append("#2e7d32")  # Clean (Green)
+            node_color.append(
+                theme_colors.get("success", "#2e7d32") if theme_colors else "#2e7d32"
+            )
         elif deg == 1:
-            node_color.append("#f9a825")  # Warning (Yellow-orange)
+            node_color.append(
+                theme_colors.get("warning", "#f9a825") if theme_colors else "#f9a825"
+            )
         else:
-            node_color.append("#c62828")  # Plagiarism cluster (Red)
+            node_color.append(
+                theme_colors.get("danger", "#c62828") if theme_colors else "#c62828"
+            )
 
         node_hover.append(
             f"<b>📄 Document:</b> {node}<br>"
@@ -158,7 +167,7 @@ def plot_similarity_network(
         hoverinfo="text",
         hovertext=node_hover,
         textfont=dict(
-            color="#0F172A",
+            color=theme_colors.get("ink", "#0F172A") if theme_colors else "#0F172A",
             size=10,
             family="Arial Black",
         ),
@@ -168,13 +177,20 @@ def plot_similarity_network(
             size=node_size,
             line=dict(
                 width=2,
-                color="#ffffff",
+                color=(
+                    theme_colors.get("background", "#ffffff")
+                    if theme_colors
+                    else "#ffffff"
+                ),
             ),
         ),
         name="Documents",
     )
 
     # ── Figure Layout ─────────────────────────────────────────────────────────────
+    bg_color = theme_colors.get("background", "#FFFFFF") if theme_colors else "#FFFFFF"
+    ink_color = theme_colors.get("ink", "#0F172A") if theme_colors else "#0F172A"
+
     fig = go.Figure(
         data=[edge_hover_trace, node_trace],
         layout=go.Layout(
@@ -185,9 +201,9 @@ def plot_similarity_network(
             shapes=shapes,
             xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            paper_bgcolor="#FFFFFF",
-            plot_bgcolor="#FFFFFF",
-            font=dict(color="#0F172A"),
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font=dict(color=ink_color),
         ),
     )
 

@@ -1016,7 +1016,8 @@ else:
             url_text = None
 
     # Check if we have enough content (either files or URL)
-    has_files = uploaded_files and len(uploaded_files) >= 2
+    # Use resolved file_bytes_dict count so a single ZIP with 2+ files inside counts correctly
+    has_files = len(file_bytes_dict) >= 2
     has_url = url_text is not None
 
     if not has_files and not has_url:
@@ -1055,12 +1056,6 @@ else:
                 unsafe_allow_html=True,
             )
             st.stop()
-
-    if not has_files and not has_url:
-        st.info(
-            "👆 Please upload **at least 2** PDF, DOCX, or TXT assignment files or paste a URL to begin."
-        )
-        st.stop()
 
     # ── Metadata Editor Section ──────────────────────────────────────────────────
     st.markdown("### 📝 Set Document Metadata")

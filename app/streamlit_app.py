@@ -540,6 +540,27 @@ with st.sidebar:
                 key="ocr_dpi_slider",
             )
 
+        st.markdown("")
+        if st.button("🔄 Reset to Factory Defaults", key="reset_defaults_button", use_container_width=True):
+            keys_to_reset = [
+                "theme_selector",
+                "threshold_slider",
+                "class_filter_selectbox",
+                "chunk_matrix_checkbox",
+                "faiss_top_k_slider",
+                "ignore_phrases_textarea",
+                "chunk_size_slider",
+                "chunk_overlap_slider",
+                "ocr_language_selector",
+                "ocr_dpi_slider",
+            ]
+            for key in keys_to_reset:
+                if key in st.session_state:
+                    del st.session_state[key]
+            set_theme("Light")
+            st.success("Settings reset to defaults!")
+            st.rerun()
+
         # ── Document Management & Bulk Clear ──
         st.markdown("---")
         st.markdown("### 📁 Document Management")

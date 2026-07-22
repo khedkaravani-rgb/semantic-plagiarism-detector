@@ -94,6 +94,9 @@ from src.utils.redis_cache import (
     clear_session,
     get_analysis_results,
     get_cache,
+    is_upload_rate_limited,
+    increment_upload_count,
+    get_upload_count,
 )
 from src.visualization.heatmap import (  # noqa: E402
     plot_chunk_similarity_comparison,
@@ -145,6 +148,22 @@ _BRANDING_LOGO_PATH = os.path.abspath(
 _INDEX_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "corpus.index")
 )
+from src.utils.pdf_report import generate_plagiarism_report
+from src.db.auth import (
+    init_db,
+    verify_user,
+    get_user_role,
+    add_user,
+    get_all_users,
+    delete_user,
+    update_password,
+    get_tour_completed,
+    set_tour_completed,
+    check_login_rate_limit,
+    record_failed_login,
+    clear_login_attempts,
+)
+from streamlit_tour import Tour
 try:
     from streamlit_tour import Tour
 except ImportError:
@@ -267,8 +286,33 @@ if not st.session_state.get("authenticated", False):
 
         if login_submitted:
             username = username.strip().lower()
-
+            
             if not username or not password:
+                st.error("Please enter both username and password.")
+            else:
+                # Check rate limit before attempting authentication
+                is_allowed, error_msg = check_login_rate_limit(username)
+                if not is_allowed:
+                    st.error(error_msg)
+                elif verify_user(username, password):
+                    role = get_user_role(username)
+                    st.session_state.authenticated = True
+                    st.session_state.role = role
+                    st.session_state.username = username
+                    st.session_state.last_interaction = time.time()
+                    # Clear failed login attempts on successful login
+                    clear_login_attempts(username)
+                    # Cache session state in Redis
+                    cache_session_state(SESSION_ID, "authenticated", True)
+                    cache_session_state(SESSION_ID, "role", role)
+                    cache_session_state(SESSION_ID, "username", username)
+                    cache_session_state(SESSION_ID, "last_interaction", time.time())
+                    st.success(f"Welcome back, {role.capitalize()}!")
+                    st.rerun()
+                else:
+                    # Record failed login attempt
+                    record_failed_login(username)
+                    st.error("Invalid username or password.")
                 from src.errors import AUTH_BLANK_CREDENTIALS
                 st.error(AUTH_BLANK_CREDENTIALS)
             elif verify_user(username, password):
@@ -1078,6 +1122,18 @@ else:
         accept_multiple_files=True,
         key="admin_file_uploader",
     )
+
+    # Check upload rate limit if files are uploaded
+    if uploaded_files:
+        username = st.session_state.get("username", "anonymous")
+        if is_upload_rate_limited(username):
+            current_count = get_upload_count(username)
+            st.error(f"Upload rate limit exceeded. Maximum 100 uploads per hour allowed. Current: {current_count}/100. Please try again later.")
+            uploaded_files = None
+        else:
+            # Increment upload counter for each file
+            for _ in uploaded_files:
+                increment_upload_count(username)
 
     st.markdown("### 🔗 Or Paste URL")
     url_input = st.text_input(

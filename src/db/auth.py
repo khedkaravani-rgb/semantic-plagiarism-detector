@@ -14,6 +14,9 @@ delete_user(username)                → None
 update_password(username, password)  → None
 get_tour_completed(username)         → bool
 set_tour_completed(username, completed) → None
+check_login_rate_limit(username)   → tuple[bool, str | None]
+record_failed_login(username)      → None
+clear_login_attempts(username)     → None
 """
 
 import os
@@ -244,3 +247,28 @@ def disable_2fa(username: str) -> None:
             (username.lower(),),
         )
         conn.commit()
+
+
+def check_login_rate_limit(username: str) -> tuple[bool, str | None]:
+    """Check if username is rate limited. Returns (is_allowed, error_message)."""
+    from src.utils.redis_cache import is_login_locked_out, get_login_attempts
+    
+    identifier = username.lower()
+    if is_login_locked_out(identifier):
+        attempts = get_login_attempts(identifier)
+        return False, f"Account locked due to too many failed attempts. Please try again in 15 minutes. ({attempts}/5 attempts)"
+    return True, None
+
+
+def record_failed_login(username: str) -> None:
+    """Record a failed login attempt for rate limiting."""
+    from src.utils.redis_cache import increment_login_attempts
+    identifier = username.lower()
+    increment_login_attempts(identifier)
+
+
+def clear_login_attempts(username: str) -> None:
+    """Clear failed login attempts after successful login."""
+    from src.utils.redis_cache import clear_login_attempts as redis_clear_login_attempts
+    identifier = username.lower()
+    redis_clear_login_attempts(identifier)

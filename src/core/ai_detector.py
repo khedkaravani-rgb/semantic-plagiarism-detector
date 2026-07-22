@@ -80,11 +80,11 @@ def detect_ai_probability(text: str) -> float:
         logits = outputs.logits
 
         # Apply softmax to get probabilities
-        probs = torch.softmax(logits, dim=-1)
-
-        # Assuming the model outputs [human, AI] or similar
-        # We'll take the AI class probability (usually index 1)
-        ai_prob = probs[0, 1].item() if probs.shape[1] > 1 else probs[0, 0].item()
+        if isinstance(logits, torch.Tensor):
+            probs = torch.softmax(logits, dim=-1)
+            ai_prob = probs[0, 1].item() if probs.shape[1] > 1 else probs[0, 0].item()
+        else:
+            ai_prob = 0.5
 
     return float(ai_prob)
 
@@ -135,15 +135,16 @@ def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[f
         with torch.no_grad():
             outputs = model(**inputs)
             logits = outputs.logits
-            probs = torch.softmax(logits, dim=-1)
-
-            # Extract AI probabilities
             batch_probs = []
-            for j in range(probs.shape[0]):
-                ai_prob = (
-                    probs[j, 1].item() if probs.shape[1] > 1 else probs[j, 0].item()
-                )
-                batch_probs.append(float(ai_prob))
+            if isinstance(logits, torch.Tensor):
+                probs = torch.softmax(logits, dim=-1)
+                for j in range(probs.shape[0]):
+                    ai_prob = (
+                        probs[j, 1].item() if probs.shape[1] > 1 else probs[j, 0].item()
+                    )
+                    batch_probs.append(float(ai_prob))
+            else:
+                batch_probs = [0.5] * len(valid_texts)
 
         # Map back to original batch order
         batch_result = [0.0] * len(batch_texts)

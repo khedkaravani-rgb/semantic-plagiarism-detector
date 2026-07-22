@@ -1,28 +1,38 @@
-from src.db.auth import (
-    init_db,
-    add_user,
-    verify_user,
-    get_user_role,
-    delete_user,
-    update_password,
-)
-import pytest
 import sqlite3
 import uuid
+
+import pytest
+
+from src.db.auth import (
+    add_user,
+    delete_user,
+    disable_2fa,
+    enable_2fa,
+    get_2fa_status,
+    get_user_role,
+    init_db,
+    update_password,
+    verify_user,
+)
 
 
 @pytest.fixture(autouse=True)
 def db_connection():
     conn = sqlite3.connect(":memory:")
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
                 CREATE TABLE IF NOT EXISTS users (
                     id       INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT    UNIQUE NOT NULL,
                     password TEXT    NOT NULL,
-                    role     TEXT    NOT NULL DEFAULT 'teacher'
+                    role     TEXT    NOT NULL DEFAULT 'teacher',
+                    tour_completed INTEGER DEFAULT 0,
+                    otp_secret TEXT DEFAULT NULL,
+                    two_factor_enabled INTEGER DEFAULT 0
                 )
-            """)
+            """
+    )
     conn.commit()
     yield conn
     print("In-memory database ready for testing")
@@ -72,3 +82,27 @@ def test_update_password():
 def test_delete_user():
     delete_user("hnsdf9")
     assert get_user_role("hnsdf9") is None
+
+
+def test_2fa_flow():
+    username = "test2fauser"
+    add_user(username, "pass123")
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is False
+    assert secret is None
+
+    test_secret = "JBSWY3DPEHPK3PXP"
+    enable_2fa(username, test_secret)
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is True
+    assert secret == test_secret
+
+    disable_2fa(username)
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is False
+    assert secret is None
+
+    delete_user(username)

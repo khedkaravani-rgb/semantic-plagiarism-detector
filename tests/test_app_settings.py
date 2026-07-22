@@ -33,18 +33,18 @@ def test_app_settings_reset_to_defaults(mock_embed, mock_webhook):
     assert not at.exception
 
     # Modify settings values
-    at.slider(key="threshold_settings_slider").set_value(0.85)
-    at.checkbox(key="use_chunk_matrix_settings_checkbox").check()
-    at.slider(key="faiss_top_k_settings_slider").set_value(15)
+    at.slider(key="threshold_slider").set_value(0.85)
+    at.checkbox(key="chunk_matrix_checkbox").check()
+    at.slider(key="faiss_top_k_slider").set_value(15)
     
     # Run the app to propagate modified values
     at.run()
     assert not at.exception
     
     # Verify settings values are updated
-    assert at.session_state["threshold_settings_slider"] == 0.85
-    assert at.session_state["use_chunk_matrix_settings_checkbox"] is True
-    assert at.session_state["faiss_top_k_settings_slider"] == 15
+    assert at.session_state["threshold_slider"] == 0.85
+    assert at.session_state["chunk_matrix_checkbox"] is True
+    assert at.session_state["faiss_top_k_slider"] == 15
     
     # Locate the Reset button and click it
     reset_btn = None
@@ -60,6 +60,7 @@ def test_app_settings_reset_to_defaults(mock_embed, mock_webhook):
     assert not at.exception
     
     # Verify settings values have reverted to their defaults in session state
-    assert at.session_state["threshold_settings_slider"] == 0.59
-    assert at.session_state["use_chunk_matrix_settings_checkbox"] is False
-    assert at.session_state["faiss_top_k_settings_slider"] == 5
+    # Plagiarism threshold defaults to DEFAULT_THRESHOLDS.plagiarism (0.59)
+    assert at.session_state["threshold_slider"] == 0.59
+    assert at.session_state["chunk_matrix_checkbox"] is False
+    assert at.session_state["faiss_top_k_slider"] == 5

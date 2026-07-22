@@ -12,7 +12,7 @@ Index types available:
   - IndexFlatIP  : Exact inner product (brute-force). O(N) per query.
                    Best for < 10k vectors. No approximation error.
   - IndexIVFFlat : Inverted-file index with Voronoi cells. O(N/nlist × nprobe)
-                   per query — significantly faster at scale.  Requires training.
+                   per query — significantly faster at scale. Requires training.
                    Best for 10k–10M vectors.
 
 Since embeddings are L2-normalised in embedding_model.py,
@@ -81,7 +81,7 @@ def build_index(
     if not all_vectors:
         return faiss.IndexFlatIP(dim), registry
 
-    matrix   = np.vstack(all_vectors)
+    matrix    = np.vstack(all_vectors)
     n_vectors = matrix.shape[0]
 
     # ── Resolve index type ────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ def search_similar_chunks(
 
     results = []
     for score, idx in zip(scores[0], indices[0]):
-        if idx < 0:
+        if idx < 0 or idx >= len(registry):
             continue
         record = registry[idx]
         if exclude_doc and record.doc_name == exclude_doc:
@@ -197,7 +197,7 @@ def find_plagiarised_chunks(
                 seen_pairs.add(pair_key)
                 matches.append({
                     "source_doc":        doc_name,
-                    "source_chunk_text": chunks[chunk_idx],
+                    "source_chunk_text": chunks[chunk_idx] if chunk_idx < len(chunks) else "",
                     "match_doc":         record.doc_name,
                     "match_chunk_text":  record.chunk_text,
                     "similarity":        round(score, 4),
@@ -251,4 +251,45 @@ def build_index_from_matrix(
         index = faiss.IndexFlatIP(dim)
         index.add(matrix.astype("float32"))
 
-    return index
+    return index
+
+
+def validate_index(index: Optional[faiss.Index], expected_count: int, expected_dimension: int = 384) -> bool:
+    """Check whether a loaded index matches the expected vector count and dimension."""
+    if index is None:
+        return False
+    try:
+        return bool(index.ntotal == expected_count and index.d == expected_dimension)
+    except Exception:
+        return False
+
+
+def load_or_rebuild_index(filepath: str) -> Tuple[faiss.Index, List[ChunkRecord], bool]:
+    """
+    Load a FAISS index from disk if valid, otherwise rebuild it from corpus.db.
+    Returns (index, registry, recovered_flag).
+    """
+    import os
+    from src.db.corpus_db import get_all_embeddings, get_chunk_registry
+
+    matrix = get_all_embeddings()
+    registry = get_chunk_registry()
+
+    n_matrix = matrix.shape[0] if (matrix is not None and matrix.size > 0) else 0
+    n_registry = len(registry)
+
+    if n_matrix != n_registry:
+        from src.errors import FAISS_EMB_REGISTRY_MISMATCH
+        raise ValueError(FAISS_EMB_REGISTRY_MISMATCH.format(emb_count=n_matrix, reg_count=n_registry))
+
+    if os.path.exists(filepath):
+        try:
+            index = load_index(filepath)
+            if validate_index(index, n_matrix, 384):
+                return index, registry, False
+        except Exception:
+            pass
+
+    index = build_index_from_matrix(matrix)
+    save_index(index, filepath)
+    return index, registry, True

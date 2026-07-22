@@ -8,11 +8,13 @@ import re
 from collections import Counter
 from pathlib import Path
 from typing import BinaryIO, Dict, List, Union
+from urllib.parse import urlparse
 
-from langdetect import LangDetectException, detect
-from src.core.translator import translate_text
 import docx
 import pdfplumber
+from langdetect import LangDetectException, detect
+
+from src.core.translator import translate_text
 
 # OCR dependencies are imported lazily so TXT/DOCX and normal text PDFs still
 # work even when Tesseract is not installed on the machine.
@@ -20,6 +22,65 @@ PDFInput = Union[str, bytes, io.BytesIO, BinaryIO]
 
 MIN_NATIVE_WORDS_PER_PAGE = 8
 DEFAULT_OCR_DPI = 250
+MIN_OCR_DPI = 150
+MAX_OCR_DPI = 400
+DEFAULT_OCR_LANGUAGE = "eng"
+
+# Tesseract language packs intentionally exposed by the administrator UI.
+# More values may be added later without changing the extraction API.
+SUPPORTED_OCR_LANGUAGES = {
+    "eng": "English",
+    "spa": "Spanish",
+    "fra": "French",
+}
+
+
+def validate_ocr_dpi(value: int) -> int:
+    """Validate and normalize an OCR rendering DPI value."""
+    if isinstance(value, bool):
+        raise ValueError("OCR DPI must be an integer between 150 and 400.")
+
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("OCR DPI must be an integer between 150 and 400.")
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or not stripped.lstrip("+-").isdigit():
+            raise ValueError("OCR DPI must be an integer between 150 and 400.")
+
+    try:
+        dpi = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("OCR DPI must be an integer between 150 and 400.") from exc
+
+    if not MIN_OCR_DPI <= dpi <= MAX_OCR_DPI:
+        raise ValueError(f"OCR DPI must be between {MIN_OCR_DPI} and {MAX_OCR_DPI}.")
+
+    return dpi
+
+
+def validate_ocr_language(value: str) -> str:
+    """Validate a Tesseract OCR language code exposed by the UI."""
+    language = str(value or "").strip().lower()
+
+    if language not in SUPPORTED_OCR_LANGUAGES:
+        supported = ", ".join(sorted(SUPPORTED_OCR_LANGUAGES))
+        raise ValueError(
+            f"Unsupported OCR language '{language or value}'. "
+            f"Supported values: {supported}."
+        )
+
+    return language
+
+
+def normalize_ocr_settings(
+    *,
+    language: str = DEFAULT_OCR_LANGUAGE,
+    dpi: int = DEFAULT_OCR_DPI,
+) -> tuple[str, int]:
+    """Return validated OCR language and DPI settings."""
+    return validate_ocr_language(language), validate_ocr_dpi(dpi)
+
 
 def detect_text_language(text: str) -> str:
     """
@@ -37,6 +98,56 @@ def detect_text_language(text: str) -> str:
         return detect(cleaned_text)
     except LangDetectException:
         return "unknown"
+
+
+_BIBLIOGRAPHY_HEADERS = re.compile(
+    r"^\s*(References|Works\s+Cited|Bibliography|Citations|Reference\s+List|Sources)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_bibliography(text: str) -> str:
+    """Remove everything from the first bibliography header onward.
+
+    The header must appear on its own line (standalone) to avoid stripping
+    body text that merely mentions the word "References".
+    """
+    match = _BIBLIOGRAPHY_HEADERS.search(text)
+    if match:
+        return text[: match.start()].rstrip()
+    return text
+
+
+def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
+    """Remove specified ignore phrases from text.
+
+    Args:
+        text: The text to process
+        ignore_phrases: Multi-line string where each line is a phrase to remove
+
+    Returns:
+        Text with all ignore phrases removed
+    """
+    if not ignore_phrases or not ignore_phrases.strip():
+        return text
+
+    # Split ignore phrases by line and filter empty lines
+    phrases = [line.strip() for line in ignore_phrases.split('\n') if line.strip()]
+
+    if not phrases:
+        return text
+
+    result = text
+    for phrase in phrases:
+        # Remove exact matches of the phrase
+        result = result.replace(phrase, '')
+
+    # Clean up extra whitespace left after removal
+    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)  # Collapse multiple blank lines
+    result = re.sub(r'[ \t]+', ' ', result)  # Collapse multiple spaces
+    result = result.strip()
+
+    return result
 
 
 def prepare_text_for_embedding(text: str) -> dict:
@@ -170,10 +281,7 @@ def _has_meaningful_text(text: str) -> bool:
     """Decide whether native extraction returned enough useful text."""
     words = re.findall(r"\b[\w'-]+\b", text or "", flags=re.UNICODE)
     alphanumeric_chars = sum(char.isalnum() for char in text or "")
-    return (
-        len(words) >= MIN_NATIVE_WORDS_PER_PAGE
-        and alphanumeric_chars >= 30
-    )
+    return len(words) >= MIN_NATIVE_WORDS_PER_PAGE and alphanumeric_chars >= 30
 
 
 def _configure_tesseract(pytesseract_module) -> None:
@@ -188,7 +296,7 @@ def _ocr_pdf_page(
     page_index: int,
     *,
     dpi: int = DEFAULT_OCR_DPI,
-    language: str = "eng",
+    language: str = DEFAULT_OCR_LANGUAGE,
 ) -> str:
     """Render one PDF page and extract text with Tesseract."""
     try:
@@ -196,9 +304,9 @@ def _ocr_pdf_page(
         import pytesseract
         from PIL import Image
     except ImportError as exc:
+        from src.errors import OCR_DEPENDENCIES_MISSING
         raise OCRDependencyError(
-            "OCR dependencies are missing. Install pytesseract, PyMuPDF and "
-            "Pillow using: python -m pip install pytesseract pymupdf pillow"
+            OCR_DEPENDENCIES_MISSING
         ) from exc
 
     _configure_tesseract(pytesseract)
@@ -222,16 +330,178 @@ def _ocr_pdf_page(
                 config="--oem 3 --psm 3",
             ).strip()
     except pytesseract.TesseractNotFoundError as exc:
+        from src.errors import OCR_TESSERACT_NOT_FOUND
         raise OCRDependencyError(
-            "Tesseract OCR was not found. Install Tesseract and either add it "
-            "to PATH or set TESSERACT_CMD to tesseract.exe."
+            OCR_TESSERACT_NOT_FOUND
         ) from exc
+
+
+def _should_use_parallel() -> bool:
+    """Determine if we should run parsing in parallel processes."""
+    import os
+    import sys
+
+    # Disable parallel processing if running under pytest to preserve unit test mocks
+    if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    # Disable nested multiprocessing
+    try:
+        import multiprocessing
+
+        if multiprocessing.current_process().name != "MainProcess":
+            return False
+        if (
+            hasattr(multiprocessing, "parent_process")
+            and multiprocessing.parent_process() is not None
+        ):
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _parse_pdf_page(
+    pdf_bytes: bytes,
+    page_index: int,
+    ocr_dpi: int,
+    ocr_language: str,
+) -> List[str]:
+    """Helper running in a subprocess to extract text from a single PDF page."""
+    import io
+
+    import pdfplumber
+
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            page = pdf.pages[page_index]
+            native_text = (page.extract_text() or "").strip()
+            selected_text = native_text
+
+            if not _has_meaningful_text(native_text):
+                selected_text = _ocr_pdf_page(
+                    pdf_bytes,
+                    page_index,
+                    dpi=ocr_dpi,
+                    language=ocr_language,
+                )
+
+            return _clean_page_text(selected_text)
+    except OCRDependencyError:
+        raise
+    except Exception as exc:
+        print(f"[document_parser] Error parsing page {page_index}: {exc}")
+        return []
+
+
+def _extract_single_file_helper(
+    data: bytes,
+    name: str,
+    ocr_language: str,
+    ocr_dpi: int,
+) -> str:
+    """Helper running in a subprocess to extract text from a single file."""
+    return extract_text(data, name, ocr_language=ocr_language, ocr_dpi=ocr_dpi)
+
+
+def extract_texts_parallel(
+    files_dict: Dict[str, bytes],
+    *,
+    ocr_language: str = DEFAULT_OCR_LANGUAGE,
+    ocr_dpi: int = DEFAULT_OCR_DPI,
+) -> tuple[Dict[str, str], Dict[str, Exception]]:
+    """
+    Extract text from multiple files in parallel using ProcessPoolExecutor.
+
+    Returns:
+        tuple of (results_dict, errors_dict)
+    """
+    ocr_language, ocr_dpi = normalize_ocr_settings(
+        language=ocr_language,
+        dpi=ocr_dpi,
+    )
+
+    results: Dict[str, str] = {}
+    errors: Dict[str, Exception] = {}
+
+    if not files_dict:
+        return results, errors
+
+    if len(files_dict) == 1 or not _should_use_parallel():
+        for name, data in files_dict.items():
+            try:
+                results[name] = _extract_single_file_helper(
+                    data, name, ocr_language, ocr_dpi
+                )
+            except Exception as exc:
+                errors[name] = exc
+        return results, errors
+
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor() as executor:
+            futures = {
+                executor.submit(
+                    _extract_single_file_helper,
+                    data,
+                    name,
+                    ocr_language,
+                    ocr_dpi,
+                ): name
+                for name, data in files_dict.items()
+            }
+            for future in futures:
+                name = futures[future]
+                try:
+                    text = future.result()
+                    results[name] = text
+                except Exception as exc:
+                    errors[name] = exc
+
+        return results, errors
+    except Exception as exc:
+        print(
+            f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential extraction..."
+        )
+        results.clear()
+        errors.clear()
+        for name, data in files_dict.items():
+            try:
+                results[name] = _extract_single_file_helper(
+                    data, name, ocr_language, ocr_dpi
+                )
+            except Exception as e:
+                errors[name] = e
+        return results, errors
+
+
+def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
+    """Extract PDF metadata (Author, Creation Date, Title) using PyMuPDF.
+
+    Returns:
+        Dictionary with keys 'author', 'creation_date', 'title'. 
+        Values are None if metadata is not available.
+    """
+    pdf_bytes = _read_pdf_bytes(file)
+    metadata = {"author": None, "creation_date": None, "title": None}
+
+    try:
+        import fitz  # PyMuPDF
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            doc_metadata = doc.metadata
+            metadata["author"] = doc_metadata.get("author")
+            metadata["creation_date"] = doc_metadata.get("creationDate")
+            metadata["title"] = doc_metadata.get("title")
+    except Exception as exc:
+        print(f"[document_parser] Error extracting PDF metadata: {exc}")
+
+    return metadata
 
 
 def extract_text_from_pdf(
     file: PDFInput,
     *,
-    ocr_language: str = "eng",
+    ocr_language: str = DEFAULT_OCR_LANGUAGE,
     ocr_dpi: int = DEFAULT_OCR_DPI,
 ) -> str:
     """Extract PDF text and OCR only pages with insufficient native text.
@@ -240,31 +510,67 @@ def extract_text_from_pdf(
     are handled page by page, allowing OCR results to enter the unchanged
     chunking, embedding and FAISS pipeline.
     """
+    ocr_language, ocr_dpi = normalize_ocr_settings(
+        language=ocr_language,
+        dpi=ocr_dpi,
+    )
+
     pdf_bytes = _read_pdf_bytes(file)
     page_lines: List[List[str]] = []
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page_index, page in enumerate(pdf.pages):
-                native_text = (page.extract_text() or "").strip()
-                selected_text = native_text
-
-                if not _has_meaningful_text(native_text):
-                    selected_text = _ocr_pdf_page(
-                        pdf_bytes,
-                        page_index,
-                        dpi=ocr_dpi,
-                        language=ocr_language,
-                    )
-
-                if selected_text.strip():
-                    page_lines.append(_clean_page_text(selected_text))
-    except OCRDependencyError:
-        # Preserve a clear, actionable message for Streamlit and callers.
-        raise
+            num_pages = len(pdf.pages)
     except Exception as exc:
         print(f"[document_parser] Error reading PDF: {exc}")
         return ""
+
+    if num_pages == 0:
+        return ""
+
+    if _should_use_parallel() and num_pages > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        page_lines = [[] for _ in range(num_pages)]
+        try:
+            with ProcessPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _parse_pdf_page,
+                        pdf_bytes,
+                        page_index,
+                        ocr_dpi,
+                        ocr_language,
+                    )
+                    for page_index in range(num_pages)
+                ]
+                for page_index, future in enumerate(futures):
+                    page_lines[page_index] = future.result()
+        except OCRDependencyError:
+            raise
+        except Exception as exc:
+            print(
+                f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential page parsing..."
+            )
+            page_lines = [
+                _parse_pdf_page(
+                    pdf_bytes,
+                    page_index,
+                    ocr_dpi,
+                    ocr_language,
+                )
+                for page_index in range(num_pages)
+            ]
+    else:
+        page_lines = [
+            _parse_pdf_page(
+                pdf_bytes,
+                page_index,
+                ocr_dpi,
+                ocr_language,
+            )
+            for page_index in range(num_pages)
+        ]
 
     if not page_lines:
         return ""
@@ -306,15 +612,175 @@ def extract_text_from_txt(file: PDFInput) -> str:
     return text.strip()
 
 
-def extract_text(file: PDFInput, filename: str) -> str:
+def extract_text_from_url(url: str) -> str:
+    """Extract text content from a URL using web scraping.
+    
+    Args:
+        url: The URL to fetch and extract text from
+        
+    Returns:
+        Cleaned text content from the webpage
+        
+    Raises:
+        ValueError: If the URL is invalid
+        Exception: If fetching or parsing fails
+    """
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise ImportError(
+            "Web scraping dependencies are missing. Install beautifulsoup4 and "
+            "requests using: python -m pip install beautifulsoup4 requests"
+        ) from exc
+    
+    # Validate URL
+    parsed = urlparse(url)
+    if not all([parsed.scheme, parsed.netloc]) or parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid URL: {url}")
+    
+    try:
+        # Fetch the webpage with a user agent to avoid being blocked
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        # Parse HTML content
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        # Remove script and style elements
+        for script in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            script.decompose()
+        
+        # Get text from main content areas
+        text = soup.get_text()
+        
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = "\n".join(chunk for chunk in chunks if chunk)
+        
+        return strip_bibliography(text)
+        
+    except requests.RequestException as exc:
+        raise Exception(f"Failed to fetch URL: {exc}") from exc
+    except Exception as exc:
+        raise Exception(f"Failed to parse webpage content: {exc}") from exc
+# --- Markdown (.md) support -------------------------------------------------
+#
+# Markdown files are plain text, so we reuse the TXT reading logic to get the
+# raw source, then strip common Markdown syntax so only the readable content
+# reaches the semantic-analysis / embedding pipeline. Fenced code blocks are
+# kept (with the fence markers removed) since code can still be relevant
+# content for plagiarism comparison; only the surrounding syntax is removed.
+
+_MD_FENCE = re.compile(r"^\s*(```|~~~)")
+_MD_ATX_HEADER = re.compile(r"^\s{0,3}#{1,6}\s+")
+_MD_SETEXT_HEADER = re.compile(r"^\s{0,3}(=+|-+)\s*$")
+_MD_BLOCKQUOTE = re.compile(r"^\s{0,3}>\s?")
+_MD_HR = re.compile(r"^\s{0,3}([-*_])(\s*\1){2,}\s*$")
+_MD_UNORDERED_LIST = re.compile(r"^(\s*)[-*+]\s+")
+_MD_ORDERED_LIST = re.compile(r"^(\s*)\d+[.)]\s+")
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_INLINE_CODE = re.compile(r"`([^`]*)`")
+_MD_BOLD_ITALIC = re.compile(r"(\*\*\*|___)(.+?)\1")
+_MD_BOLD = re.compile(r"(\*\*|__)(.+?)\1")
+_MD_ITALIC = re.compile(r"(\*|_)(.+?)\1")
+_MD_STRIKETHROUGH = re.compile(r"~~(.+?)~~")
+
+
+def _strip_inline_markdown(line: str) -> str:
+    """Remove inline Markdown emphasis, links, images, and inline code marks."""
+    line = _MD_IMAGE.sub(r"\1", line)
+    line = _MD_LINK.sub(r"\1", line)
+    line = _MD_BOLD_ITALIC.sub(r"\2", line)
+    line = _MD_BOLD.sub(r"\2", line)
+    line = _MD_ITALIC.sub(r"\2", line)
+    line = _MD_STRIKETHROUGH.sub(r"\1", line)
+    line = _MD_INLINE_CODE.sub(r"\1", line)
+    return line
+
+
+def strip_markdown_syntax(raw_text: str) -> str:
+    """Convert raw Markdown source into plain readable text.
+
+    Fenced code block contents are preserved as-is (fence markers removed);
+    headers, lists, blockquotes, horizontal rules, links, images, and
+    emphasis markers are stripped down to their underlying text.
+    """
+    lines = raw_text.splitlines()
+    output: List[str] = []
+    in_code_block = False
+
+    for line in lines:
+        if _MD_FENCE.match(line):
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            output.append(line)
+            continue
+
+        if _MD_HR.match(line):
+            continue
+
+        if _MD_SETEXT_HEADER.match(line) and output and output[-1].strip():
+            # Setext header underline (=== or ---) following a text line.
+            continue
+
+        line = _MD_ATX_HEADER.sub("", line)
+        line = _MD_BLOCKQUOTE.sub("", line)
+        line = _MD_UNORDERED_LIST.sub(r"\1", line)
+        line = _MD_ORDERED_LIST.sub(r"\1", line)
+        line = _strip_inline_markdown(line)
+
+        output.append(line)
+
+    text = "\n".join(output)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def extract_text_from_md(file: PDFInput) -> str:
+    """Extract plain text from a Markdown (.md) file.
+
+    Reads the raw Markdown source (reusing the TXT reader) and strips
+    Markdown syntax so downstream chunking/embedding sees clean prose.
+    """
+    raw_text = extract_text_from_txt(file)
+    if not raw_text:
+        return ""
+    return strip_markdown_syntax(raw_text)
+
+
+def extract_text(
+    file: PDFInput,
+    filename: str,
+    *,
+    ocr_language: str = DEFAULT_OCR_LANGUAGE,
+    ocr_dpi: int = DEFAULT_OCR_DPI,
+) -> str:
     """Route extraction according to a filename extension."""
+    ocr_language, ocr_dpi = normalize_ocr_settings(
+        language=ocr_language,
+        dpi=ocr_dpi,
+    )
+
     extension = filename.rsplit(".", 1)[-1].lower()
 
     if extension == "pdf":
-        return extract_text_from_pdf(file)
-    if extension == "docx":
-        return extract_text_from_docx(file)
-    return extract_text_from_txt(file)
+        raw = extract_text_from_pdf(file, ocr_language=ocr_language, ocr_dpi=ocr_dpi)
+    elif extension == "docx":
+        raw = extract_text_from_docx(file)
+    elif extension == "md":
+        raw = extract_text_from_md(file)
+    else:
+        raw = extract_text_from_txt(file)
+
+    return strip_bibliography(raw)
 
 
 def extract_texts_from_pdfs(files: list) -> Dict[str, str]:
@@ -324,16 +790,32 @@ def extract_texts_from_pdfs(files: list) -> Dict[str, str]:
 
 def extract_texts(files: list) -> Dict[str, str]:
     """Extract text from multiple uploaded files."""
-    results: Dict[str, str] = {}
-
-    for file in files:
+    files_dict = {}
+    for idx, file in enumerate(files):
         if hasattr(file, "name"):
             name = file.name
         elif isinstance(file, str):
             name = Path(file).name
         else:
-            name = f"document_{len(results) + 1}"
+            name = f"document_{idx + 1}"
 
-        results[name] = extract_text(file, name)
+        try:
+            files_dict[name] = _read_pdf_bytes(file)
+        except Exception as exc:
+            print(f"[document_parser] Error reading file data for {name}: {exc}")
+            files_dict[name] = b""
+
+    raw_texts, errors = extract_texts_parallel(files_dict)
+    if errors:
+        raise next(iter(errors.values()))
+
+    results = {}
+    for name in files_dict.keys():
+        results[name] = raw_texts.get(name, "")
 
     return results
+
+
+# Cross-lingual embedding preparation (Issue #46)
+# Re-exported here because parsing is the boundary where raw source text is
+# converted into embedding-ready text.

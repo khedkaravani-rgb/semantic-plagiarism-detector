@@ -5,16 +5,24 @@ Generates professional PDF plagiarism reports using ReportLab.
 Provides side-by-side comparison of suspicious paragraph pairs with visual similarity indicators.
 """
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import inch
+from datetime import datetime
+from io import BytesIO
+from typing import List, Optional, Tuple
+
+from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
-    SimpleDocTemplate,
+    PageBreak,
     Paragraph,
+    SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
-    PageBreak,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -333,6 +341,19 @@ def highlight_pdf_matches(
 
     Returns:
         bytes: Binary PDF data with highlighted matches
+
+
+import fitz  # PyMuPDF
+
+
+def highlight_pdf_matches(
+    pdf_source: str | bytes,
+    matching_chunks: List[str],
+    highlight_color: Tuple[float, float, float] = (1.0, 0.85, 0.0),  # Yellow
+) -> bytes:
+    """Opens a PDF, searches for matching text chunks, applies yellow highlights
+
+    on exact bounding box coordinates, and returns the modified PDF bytes.
     """
     if isinstance(pdf_source, bytes):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
@@ -347,6 +368,12 @@ def highlight_pdf_matches(
                 continue
 
             # Search for coordinate rectangles of the text on the page
+            chunk_clean = str(chunk).strip()
+            # Avoid highlighting tiny single words/chars to prevent false positives
+            if len(chunk_clean) < 3:
+                continue
+
+            # Search page for matching text coordinates
             quad_matches = page.search_for(chunk_clean)
             for rect in quad_matches:
                 annot = page.add_highlight_annot(rect)
@@ -357,3 +384,6 @@ def highlight_pdf_matches(
     output_buffer = doc.tobytes()
     doc.close()
     return output_buffer
+    output_bytes = doc.tobytes()
+    doc.close()
+    return output_bytes

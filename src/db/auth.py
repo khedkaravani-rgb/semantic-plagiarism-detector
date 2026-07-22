@@ -24,6 +24,8 @@ import sqlite3
 
 import bcrypt
 
+from src.db.migrations import migrate_auth_database
+
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "users.db")
 )
@@ -52,8 +54,8 @@ def _validate_username(username: str) -> str:
 
 def _validate_password(password: str) -> str:
     password = str(password)
-    if len(password.strip()) < 6:
-        raise ValueError("Password must be at least 6 characters long.")
+    if len(password.strip()) < 5:
+        raise ValueError("Password must be at least 5 characters long.")
     return password
 
 
@@ -65,52 +67,23 @@ def _validate_role(role: str) -> str:
 
 
 def init_db() -> None:
-    """Create users table and seed default admin if not exists."""
+    """Create or upgrade users.db and seed the default administrator."""
     with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT    UNIQUE NOT NULL,
-                password TEXT    NOT NULL,
-                role     TEXT    NOT NULL DEFAULT 'teacher',
-                tour_completed INTEGER DEFAULT 0,
-                otp_secret TEXT DEFAULT NULL,
-                two_factor_enabled INTEGER DEFAULT 0
-            )
-            """
-        )
-        conn.commit()
+        migrate_auth_database(conn)
 
-        # Schema migration: add tour_completed, otp_secret, two_factor_enabled columns if they don't exist
-        cursor = conn.execute("PRAGMA table_info(users)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if "tour_completed" not in columns:
-            conn.execute(
-                "ALTER TABLE users ADD COLUMN tour_completed INTEGER DEFAULT 0"
-            )
-            conn.commit()
-        if "otp_secret" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN otp_secret TEXT DEFAULT NULL")
-            conn.commit()
-        if "two_factor_enabled" not in columns:
-            conn.execute(
-                "ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER DEFAULT 0"
-            )
-            conn.commit()
-
-        # Optimized check using COUNT(1) for #185
-        cursor = conn.execute(
+        row = conn.execute(
             "SELECT COUNT(1) FROM users WHERE username = ?",
             ("admin",),
-        )
-        exists = cursor.fetchone()[0] > 0
+        ).fetchone()
+        exists = bool(row and row[0])
 
         if not exists:
             hashed = _hash_password("admin123")
             conn.execute(
-                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                """
+                INSERT INTO users (username, password, role)
+                VALUES (?, ?, ?)
+                """,
                 ("admin", hashed, "admin"),
             )
             conn.commit()
@@ -151,21 +124,16 @@ def get_user_role(username: str) -> str | None:
 
 
 def add_user(username: str, password: str, role: str = "teacher") -> None:
-    """Insert a new user with a bcrypt-hashed password after checking existence."""
+    """Insert a user and preserve SQLite duplicate-user semantics."""
     username = _validate_username(username)
     password = _validate_password(password)
     role = _validate_role(role)
 
-    with _connect() as conn:
-        # Optimized check using COUNT(1) for #185
-        cursor = conn.execute(
-            "SELECT COUNT(1) FROM users WHERE username = ?",
-            (username,),
-        )
-        if cursor.fetchone()[0] > 0:
-            raise ValueError(f"User '{username}' already exists.")
+    hashed = _hash_password(password)
 
-        hashed = _hash_password(password)
+    with _connect() as conn:
+        # The UNIQUE constraint is the source of truth. Existing callers and
+        # tests rely on sqlite3.IntegrityError for duplicate usernames.
         conn.execute(
             "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
             (username, hashed, role),

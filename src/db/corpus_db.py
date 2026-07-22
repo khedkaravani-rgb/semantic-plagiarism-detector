@@ -11,6 +11,11 @@ from datetime import datetime
 
 import numpy as np
 
+from src.db.migrations import (
+    delete_all_if_table_exists,
+    migrate_corpus_database,
+)
+
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "corpus.db")
 )
@@ -23,7 +28,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_corpus_db() -> None:
-    """Create the corpus and chunks tables if they do not exist."""
+    """Create or upgrade corpus.db without deleting persisted data."""
     with _connect() as conn:
         conn.execute(
             """
@@ -71,6 +76,7 @@ def init_corpus_db() -> None:
         """
         )
         conn.commit()
+        migrate_corpus_database(conn)
 
 
 def add_document(
@@ -230,15 +236,12 @@ def get_document_chunks_count(filename: str) -> int:
 
 
 def clear_all_data() -> None:
-    init_corpus_db()
-
+    """Clear known corpus tables while tolerating partial schemas."""
     with _connect() as conn:
-        conn.execute("DELETE FROM chunks")
-        conn.execute("DELETE FROM documents")
-        try:
-            conn.execute("DELETE FROM plagiarism_incidents")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("PRAGMA foreign_keys = ON")
+        delete_all_if_table_exists(conn, "chunks")
+        delete_all_if_table_exists(conn, "documents")
+        delete_all_if_table_exists(conn, "plagiarism_incidents")
         conn.commit()
 
 

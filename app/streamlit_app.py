@@ -23,6 +23,8 @@ from typing import Any
 
 from sklearn.metrics.pairwise import cosine_similarity
 
+import hashlib
+
 from app.theme import (
     empty_state_html,
     get_colors,
@@ -31,11 +33,6 @@ from app.theme import (
     set_theme,
 )
 from src.core.ai_detector import detect_documents_ai_probability
-from src.visualization.heatmap import plot_similarity_heatmap, plot_chunk_similarity_comparison
-from src.core.faiss_index import build_index, find_plagiarised_chunks, search_similar_chunks, save_index, load_index, build_index_from_matrix, ChunkRecord
-from src.visualization.network_graph import plot_similarity_network
-from src.core.webhook import send_plagiarism_alert
-from src.db import init_corpus_db, get_all_documents, delete_document, get_all_embeddings, get_chunk_registry, add_document, get_document_by_hash, add_chunks
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
@@ -45,8 +42,10 @@ from src.core.document_parser import (
 )
 from src.core.embedding_model import embed_documents
 from src.core.faiss_index import (
+    ChunkRecord,
     build_index,
     build_index_from_matrix,
+    load_index,
     load_or_rebuild_index,
     save_index,
     search_similar_chunks,
@@ -60,11 +59,14 @@ from src.core.similarity import (
 from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
 from src.db import (
+    add_chunks,
+    add_document,
     clear_all_data,
     delete_document,
     get_all_documents,
     get_all_embeddings,
     get_chunk_registry,
+    get_document_by_hash,
     get_documents_by_class,
     get_unique_class_sections,
     init_corpus_db,
@@ -80,7 +82,7 @@ from src.db.auth import (
     set_tour_completed,
     verify_user,
 )
-from src.utils.pdf_report import highlight_pdf_matches
+from src.utils.pdf_report import generate_plagiarism_report, highlight_pdf_matches
 from src.utils.redis_cache import (
     cache_session_state,
     clear_session,
@@ -90,6 +92,7 @@ from src.utils.redis_cache import (
 )
 from src.utils.warning_list import render_warning_controls
 from src.visualization.heatmap import plot_similarity_heatmap
+from src.visualization.network_graph import plot_similarity_network
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -580,279 +583,6 @@ else:
 
     unique_classes = ["All Classes"] + get_unique_class_sections()
 
-    selected_class = st.selectbox("Select Class/Section", unique_classes, index=0)
-
-# ── Main UI ───────────────────────────────────────────────────────────────────
-st.title("🔍 Semantic Plagiarism Detection System")
-
-uploaded_files = st.file_uploader(
-    "📂 Upload Assignments",
-    type=["pdf", "docx", "txt"],
-    accept_multiple_files=True,
-    key="file_uploader",
-)
-
-file_bytes_dict = (
-    {f.name: f.getvalue() for f in uploaded_files} if uploaded_files else {}
-)
-
-if len(file_bytes_dict) < 2:
-    st.info("Upload at least 2 files to begin analysis.")
-    st.stop()
-
-
-# ── Pipeline Execution ────────────────────────────────────────────────────────
-@st.cache_data(show_spinner=False)
-def run_pipeline(
-    file_bytes_dict: dict[str, bytes],
-    ocr_language: str,
-    ocr_dpi: int,
-    chunk_size: int = 500,
-    chunk_overlap: int = 50,
-):
-    raw_texts = {}
-    for name, data in file_bytes_dict.items():
-        raw_texts[name] = extract_text(
-            _io.BytesIO(data),
-            name,
-            ocr_language=ocr_language,
-            ocr_dpi=ocr_dpi,
-        )
-
-    chunked_docs = chunk_documents(
-        raw_texts,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-    translated_chunked_docs = {}
-
-    for doc_name, chunks in chunked_docs.items():
-        translated_chunked_docs[doc_name] = []
-        for chunk in chunks:
-            prepared = prepare_text_for_embedding(chunk)
-            translated_chunked_docs[doc_name].append(prepared["embedding_text"])
-
-    embeddings = embed_documents(translated_chunked_docs)
-    sim_df = document_similarity_matrix(embeddings)
-
-    names = list(embeddings.keys())
-    n = len(names)
-    chunk_mat = np.zeros((n, n))
-
-    for i, na in enumerate(names):
-        for j, nb in enumerate(names):
-            if i == j:
-                chunk_mat[i, j] = 1.0
-            elif j > i:
-                ea, eb = embeddings[na], embeddings[nb]
-                score = (
-                    float(np.max(cosine_similarity(ea, eb)))
-                    if ea.size and eb.size
-                    else 0.0
-                )
-                chunk_mat[i, j] = score
-                chunk_mat[j, i] = score
-
-    chunk_sim_df = pd.DataFrame(chunk_mat, index=names, columns=names)
-    faiss_index, registry = build_index(embeddings, chunked_docs)
-    ai_probabilities = detect_documents_ai_probability(chunked_docs)
-
-    return (
-        raw_texts,
-        chunked_docs,
-        embeddings,
-        sim_df,
-        chunk_sim_df,
-        faiss_index,
-        registry,
-        ai_probabilities,
-    )
-
-    # Filter out already-uploaded files and process only new ones
-    new_files = {}
-    skipped_files = []
-    for f in uploaded_files:
-        file_hash = hashlib.sha256(f.read()).hexdigest()
-        f.seek(0)  # Reset file pointer
-        existing = get_document_by_hash(file_hash)
-        if existing:
-            skipped_files.append(f.name)
-        else:
-            new_files[f.name] = f.read()
-            add_document(f.name, file_hash)
-    
-    if skipped_files:
-        st.info(f"⏭️ Skipped {len(skipped_files)} already-uploaded files: {', '.join(skipped_files)}")
-    
-    if not new_files:
-        from src.errors import UI_NO_NEW_FILES
-        st.warning(UI_NO_NEW_FILES)
-        if faiss_index is None:
-            st.stop()
-        # Continue with existing index for analysis
-    else:
-        st.info(f"📤 Processing {len(new_files)} new files...")
-        
-        # Process new files
-        with st.spinner("🧠 Processing new PDFs, building embeddings and FAISS index…"):
-            raw_texts_new, chunked_docs_new, embeddings_new, sim_df_new, chunk_sim_df_new, faiss_index_new, registry_new = \
-                run_pipeline(new_files)
-        
-        # If we have an existing index, merge the new data
-        if faiss_index is not None:
-            # Add new embeddings to existing index
-            all_vectors = []
-            all_registry = registry.copy()
-            
-            for doc_name, emb in embeddings_new.items():
-                chunks = chunked_docs_new.get(doc_name, [])
-                if emb.ndim != 2 or emb.shape[0] == 0:
-                    continue
-                for i, (vec, text) in enumerate(zip(emb, chunks)):
-                    all_vectors.append(vec.astype("float32"))
-                    all_registry.append(ChunkRecord(doc_name, i, text))
-            
-            if all_vectors:
-                matrix = np.vstack(all_vectors)
-                faiss_index.add(matrix)  # type: ignore[arg-type]
-                registry = all_registry
-                st.success(f"✅ Added {len(all_vectors)} new vectors to existing index")
-            
-            raw_texts = raw_texts_new
-            chunked_docs = chunked_docs_new
-            embeddings = embeddings_new
-            sim_df = sim_df_new
-            chunk_sim_df = chunk_sim_df_new
-        else:
-            # No existing index, use the new one
-            faiss_index = faiss_index_new
-            registry = registry_new
-            raw_texts = raw_texts_new
-            chunked_docs = chunked_docs_new
-            embeddings = embeddings_new
-            sim_df = sim_df_new
-            chunk_sim_df = chunk_sim_df_new
-        
-        # Save the updated FAISS index to disk
-        save_index(faiss_index, _INDEX_PATH)
-        
-        # Store chunks in database for persistence
-        for doc_name, emb in embeddings_new.items():
-            chunks = chunked_docs_new.get(doc_name, [])
-            if emb.ndim != 2 or emb.shape[0] == 0:
-                continue
-            # Get the starting vector_id for this document
-            start_id = len(get_chunk_registry())
-            chunks_to_add = []
-            for i, (vec, text) in enumerate(zip(emb, chunks)):
-                chunks_to_add.append((start_id + i, doc_name, i, text, vec))
-            add_chunks(chunks_to_add)
-    
-    # If we have an existing index but no new files, load existing data from database
-    if faiss_index is not None and not new_files:
-        all_embs = get_all_embeddings()
-        chunked_docs = {}
-        embeddings = {}
-        for i, rec in enumerate(registry):
-            doc_name = rec.doc_name
-            if doc_name not in chunked_docs:
-                chunked_docs[doc_name] = []
-                embeddings[doc_name] = []
-            chunked_docs[doc_name].append(rec.chunk_text)
-            if i < len(all_embs):
-                embeddings[doc_name].append(all_embs[i])
-
-        for d in embeddings:
-            embeddings[d] = np.array(embeddings[d], dtype=np.float32)
-
-        raw_texts = {d: "\n\n".join(chunks) for d, chunks in chunked_docs.items()}
-
-        if len(embeddings) >= 2:
-            sim_df = document_similarity_matrix(embeddings)
-            chunk_sim_df = None
-            active_sim_df = sim_df
-            flags = flag_plagiarism(active_sim_df, threshold=threshold)
-        else:
-            sim_df = None
-            chunk_sim_df = None
-            active_sim_df = None
-            flags = []
-    else:
-        # Check for empty PDFs (e.g. scanned images with no OCR)
-        empty_docs = [name for name, text in raw_texts.items() if not text.strip()]
-        if empty_docs:
-            from src.errors import UI_COULD_NOT_EXTRACT_TEXT
-            st.warning(UI_COULD_NOT_EXTRACT_TEXT.format(docs=', '.join(empty_docs)))
-
-with st.spinner("🧠 Processing files and building embeddings…"):
-    analysis_results = run_pipeline(
-        file_bytes_dict,
-        ocr_language,
-        ocr_dpi,
-        chunk_size,
-        chunk_overlap,
-    )
-
-(
-    raw_texts,
-    chunked_docs,
-    embeddings,
-    sim_df,
-    chunk_sim_df,
-    faiss_index,
-    registry,
-    ai_probabilities,
-) = analysis_results
-
-active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
-flags = flag_plagiarism(active_sim_df, threshold=threshold)
-
-st.subheader("📊 Analysis Summary")
-st.write(
-    f"Processed **{len(raw_texts)}** documents with Chunk Size: `{chunk_size}` and Overlap: `{chunk_overlap}`."
-)
-
-with st.sidebar:
-    selected_class = st.selectbox(
-        "Select Class/Section",
-        unique_classes,
-        index=0,
-        key="class_filter_selectbox",
-    )
-
-    st.markdown("---")
-    st.markdown(
-        """
-**How it works**
-1. Upload **PDF, DOCX, or TXT** assignment files or import from Google Drive
-2. Text is extracted according to the file type
-3. Text is split into **paragraph chunks**
-4. Chunks are embedded with **all-MiniLM-L6-v2**
-5. A **FAISS index** is built over all chunk vectors
-6. Pairs above the threshold are flagged
-"""
-    )
-    st.markdown("---")
-    st.caption("Semantic Plagiarism Detector · FAISS edition")
-
-    st.markdown("---")
-    if st.button("🚪 Log Out", use_container_width=True, key="logout_button"):
-        for key in ["authenticated", "username", "role", "last_interaction"]:
-            if key in st.session_state:
-                del st.session_state[key]
-        clear_session(SESSION_ID)
-        st.rerun()
-
-
-# ── Header ────────────────────────────────────────────────────────────────────
-st.title("🔍 Semantic Plagiarism Detection System")
-st.markdown(
-    "Upload student PDF, DOCX, or TXT files. Detects **semantic similarity** "
-    "(even paraphrased text) using transformer embeddings + **FAISS vector search**."
-)
-st.divider()
-
-
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if (
     Tour is not None
@@ -899,15 +629,6 @@ if (
         st.session_state.show_tour = False
         st.success("✅ Onboarding tour completed!")
         st.rerun()
-
-# ── Header ────────────────────────────────────────────────────────────────────
-# ── Main Header ───────────────────────────────────────────────────────────────
-st.title("🔍 Semantic Plagiarism Detection System")
-st.markdown(
-    "Upload student PDF, DOCX, or TXT files. Detects **semantic similarity** "
-    "(even paraphrased text) using transformer embeddings + **FAISS vector search**."
-)
-st.divider()
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
 
@@ -1042,7 +763,7 @@ else:
         "📂 Upload Assignments",
         type=["pdf", "docx", "txt", "zip"],
         accept_multiple_files=True,
-        key="admin_file_uploader",
+        key="file_uploader",
     )
 
     # 2. GOOGLE DRIVE IMPORT SECTION (#146)
@@ -1263,7 +984,7 @@ else:
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
 
-    if not uploaded_files or len(uploaded_files) < 2:
+    if len(file_bytes_dict) < 2:
         st.markdown(
             empty_state_html(
                 "Waiting for Files",
@@ -1274,22 +995,21 @@ else:
         )
         st.stop()
 
-    # Process files pipeline
-    raw_texts = {}
-    for name, data in file_bytes_dict.items():
-        raw_texts[name] = extract_text(
-            _io.BytesIO(data), name, ocr_language=ocr_language, ocr_dpi=ocr_dpi
-        )
+    if "sent_alerts" not in st.session_state:
+        st.session_state.sent_alerts = set()
 
     for flag in flags:
-        try:
-            send_plagiarism_alert(
-                doc_a=flag["doc_a"],
-                doc_b=flag["doc_b"],
-                similarity=float(flag["similarity"]),
-            )
-        except Exception:
-            pass
+        alert_key = (flag["doc_a"], flag["doc_b"])
+        if alert_key not in st.session_state.sent_alerts:
+            try:
+                send_plagiarism_alert(
+                    doc_a=flag["doc_a"],
+                    doc_b=flag["doc_b"],
+                    similarity=float(flag["similarity"]),
+                )
+                st.session_state.sent_alerts.add(alert_key)
+            except Exception:
+                pass
 
     # ── Summary Metrics ───────────────────────────────────────────────────────
 
@@ -1323,10 +1043,6 @@ else:
 
     with tab_warnings:
         st.subheader("⚠️ Plagiarism Warnings")
-        render_warning_controls(
-            flags, threshold=threshold, ai_probabilities=ai_probabilities
-        )
-
         render_warning_controls(
             flags, threshold=threshold, ai_probabilities=ai_probabilities
         )

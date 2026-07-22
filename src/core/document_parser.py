@@ -426,6 +426,29 @@ def extract_texts_parallel(
     return results, errors
 
 
+def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
+    """Extract PDF metadata (Author, Creation Date, Title) using PyMuPDF.
+
+    Returns:
+        Dictionary with keys 'author', 'creation_date', 'title'. 
+        Values are None if metadata is not available.
+    """
+    pdf_bytes = _read_pdf_bytes(file)
+    metadata = {"author": None, "creation_date": None, "title": None}
+
+    try:
+        import fitz  # PyMuPDF
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            doc_metadata = doc.metadata
+            metadata["author"] = doc_metadata.get("author")
+            metadata["creation_date"] = doc_metadata.get("creationDate")
+            metadata["title"] = doc_metadata.get("title")
+    except Exception as exc:
+        print(f"[document_parser] Error extracting PDF metadata: {exc}")
+
+    return metadata
+
+
 def extract_text_from_pdf(
     file: PDFInput,
     *,

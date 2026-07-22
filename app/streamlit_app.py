@@ -105,6 +105,7 @@ from src.core.document_parser import (
     extract_text,
     normalize_ocr_settings,
     prepare_text_for_embedding,
+    extract_pdf_metadata,
 )
 
 # Initialize corpus database
@@ -373,6 +374,16 @@ with st.sidebar:
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.text(f"📄 {doc['filename']}")
+                    # Display PDF metadata if available
+                    if doc.get('pdf_author') or doc.get('pdf_creation_date'):
+                        metadata_parts = []
+                        if doc.get('pdf_author'):
+                            metadata_parts.append(f"Author: {doc['pdf_author']}")
+                        if doc.get('pdf_creation_date'):
+                            metadata_parts.append(f"Date: {doc['pdf_creation_date']}")
+                        if doc.get('pdf_title'):
+                            metadata_parts.append(f"Title: {doc['pdf_title']}")
+                        st.caption(" | ".join(metadata_parts))
                 with col2:
                     if st.button("🗑️", key=f"del_{doc['filename']}"):
                         delete_document(doc["filename"])
@@ -1113,12 +1124,17 @@ else:
                 doc_name,
                 {"student_name": "", "class_section": "", "assignment_title": ""},
             )
+            # Extract PDF metadata
+            pdf_metadata = extract_pdf_metadata(file_info["data"])
             add_document(
                 doc_name,
                 file_info["hash"],
                 class_section=meta["class_section"],
                 student_name=meta["student_name"],
                 assignment_title=meta["assignment_title"],
+                pdf_author=pdf_metadata.get("author"),
+                pdf_creation_date=pdf_metadata.get("creation_date"),
+                pdf_title=pdf_metadata.get("title"),
             )
 
         # If an index already exists, append the new vectors.

@@ -512,7 +512,11 @@ with st.sidebar:
             )
 
         st.markdown("")
-        if st.button("🔄 Reset to Factory Defaults", key="reset_defaults_button", use_container_width=True):
+        if st.button(
+            "🔄 Reset to Factory Defaults",
+            key="reset_defaults_button",
+            use_container_width=True,
+        ):
             keys_to_reset = [
                 "theme_selector",
                 "threshold_slider",
@@ -900,7 +904,7 @@ else:
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
         "📂 Upload Assignments",
-        type=["pdf", "docx", "txt", "zip"],
+        type=["pdf", "docx", "txt", "zip", "csv"],
         accept_multiple_files=True,
         key="file_uploader",
     )
@@ -918,6 +922,92 @@ else:
             # Increment upload counter for each file
             for _ in uploaded_files:
                 increment_upload_count(username)
+
+    # CSV Column Configuration Section
+    csv_configs = {}
+    csv_files = (
+        [f for f in uploaded_files if f.name.lower().endswith(".csv")]
+        if uploaded_files
+        else []
+    )
+    if csv_files:
+        st.markdown("### 📊 CSV Ingestion Settings")
+        for f in csv_files:
+            try:
+                csv_bytes = f.getvalue()
+                df = pd.read_csv(_io.BytesIO(csv_bytes))
+                columns = list(df.columns)
+                if not columns:
+                    st.error(f"⚠️ CSV file '{f.name}' has no columns.")
+                    continue
+                # Auto-detect default text column
+                default_text_idx = 0
+                for i, col in enumerate(columns):
+                    if any(
+                        term in col.lower()
+                        for term in [
+                            "response",
+                            "answer",
+                            "text",
+                            "essay",
+                            "content",
+                            "document",
+                            "submission",
+                        ]
+                    ):
+                        default_text_idx = i
+                        break
+                # Auto-detect default name/id column
+                default_name_idx = None
+                for i, col in enumerate(columns):
+                    if (
+                        any(
+                            term in col.lower()
+                            for term in [
+                                "name",
+                                "student",
+                                "email",
+                                "id",
+                                "user",
+                                "username",
+                                "timestamp",
+                            ]
+                        )
+                        and i != default_text_idx
+                    ):
+                        default_name_idx = i
+                        break
+                st.markdown(f"**Column Mapping for `{f.name}`**")
+                col_text, col_name = st.columns(2)
+                with col_text:
+                    text_col = st.selectbox(
+                        f"Text Column ({f.name})",
+                        options=columns,
+                        index=default_text_idx,
+                        key=f"csv_text_col_{f.name}",
+                        help="Select the column containing the essay/text responses to analyze.",
+                    )
+                with col_name:
+                    name_options = ["None (Use Row Number)"] + columns
+                    default_name_idx_adjusted = (
+                        (default_name_idx + 1) if default_name_idx is not None else 0
+                    )
+                    name_col = st.selectbox(
+                        f"Student Name/ID Column ({f.name})",
+                        options=name_options,
+                        index=default_name_idx_adjusted,
+                        key=f"csv_name_col_{f.name}",
+                        help="Select the column containing student names or IDs (optional).",
+                    )
+                csv_configs[f.name] = {
+                    "df": df,
+                    "text_col": text_col,
+                    "name_col": (
+                        None if name_col == "None (Use Row Number)" else name_col
+                    ),
+                }
+            except Exception as e:
+                st.error(f"❌ Failed to parse CSV file '{f.name}': {str(e)}")
 
     st.markdown("### 🔗 Or Paste URL")
     url_input = st.text_input(
@@ -1003,6 +1093,29 @@ else:
                     st.error(
                         f"⚠️ Failed to process ZIP archive '{f.name}': Unknown error occurred."
                     )
+            elif f.name.lower().endswith(".csv"):
+                if f.name in csv_configs:
+                    config = csv_configs[f.name]
+                    df = config["df"]
+                    text_col = config["text_col"]
+                    name_col = config["name_col"]
+                    for idx, row in df.iterrows():
+                        text_val = row[text_col]
+                        if pd.isna(text_val) or not str(text_val).strip():
+                            continue
+                        if name_col and not pd.isna(row[name_col]):
+                            student_name = str(row[name_col]).strip()
+                        else:
+                            student_name = f"Row {idx + 1}"
+                        clean_student_name = student_name.replace("/", "_").replace(
+                            "\\", "_"
+                        )
+                        virtual_filename = (
+                            f"{clean_student_name} ({f.name} - Row {idx + 1}).txt"
+                        )
+                        file_bytes_dict[virtual_filename] = str(text_val).encode(
+                            "utf-8"
+                        )
             else:
                 file_bytes_dict[f.name] = f.read()
             f.seek(0)
@@ -1097,31 +1210,54 @@ else:
 
     metadata_dict = {}
     for filename in file_bytes_dict.keys():
-        base_name = os.path.splitext(filename)[0]
-        guessed_name = base_name.replace("_", " ").replace("-", " ").title()
+        # Check if this filename is a virtual CSV document
+        is_csv_doc = False
+        csv_filename_matched = None
+        for csv_name in csv_configs.keys():
+            if f"({csv_name} - Row " in filename:
+                is_csv_doc = True
+                csv_filename_matched = csv_name
+                break
 
-        with st.expander(f"📄 {filename}", expanded=False):
-            student_name = st.text_input(
-                f"Student Name for {filename}",
-                value=guessed_name,
-                key=f"student_{filename}",
-            )
-            class_section = st.text_input(
-                f"Class/Section for {filename}",
-                value=batch_class,
-                key=f"class_{filename}",
-            )
-            assignment_title = st.text_input(
-                f"Assignment Title for {filename}",
-                value=batch_assignment,
-                key=f"assignment_{filename}",
-            )
-
+        if is_csv_doc:
+            base_name = os.path.splitext(filename)[0]
+            marker = f"({csv_filename_matched} - Row "
+            marker_idx = base_name.find(marker)
+            if marker_idx != -1:
+                student_name = base_name[:marker_idx].strip()
+            else:
+                student_name = base_name
             metadata_dict[filename] = {
-                "student_name": student_name.strip(),
-                "class_section": class_section.strip(),
-                "assignment_title": assignment_title.strip(),
+                "student_name": student_name,
+                "class_section": batch_class.strip(),
+                "assignment_title": batch_assignment.strip(),
             }
+        else:
+            base_name = os.path.splitext(filename)[0]
+            guessed_name = base_name.replace("_", " ").replace("-", " ").title()
+
+            with st.expander(f"📄 {filename}", expanded=False):
+                student_name = st.text_input(
+                    f"Student Name for {filename}",
+                    value=guessed_name,
+                    key=f"student_{filename}",
+                )
+                class_section = st.text_input(
+                    f"Class/Section for {filename}",
+                    value=batch_class,
+                    key=f"class_{filename}",
+                )
+                assignment_title = st.text_input(
+                    f"Assignment Title for {filename}",
+                    value=batch_assignment,
+                    key=f"assignment_{filename}",
+                )
+
+                metadata_dict[filename] = {
+                    "student_name": student_name.strip(),
+                    "class_section": class_section.strip(),
+                    "assignment_title": assignment_title.strip(),
+                }
 
     # Add metadata for URL input if provided
     if url_filename:

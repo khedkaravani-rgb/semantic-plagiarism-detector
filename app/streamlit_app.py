@@ -35,6 +35,7 @@ from app.theme import (
     get_theme_name,
     inject_css,
     set_theme,
+    version_check_widget_html,
 )
 
 from src.core.ai_detector import detect_documents_ai_probability
@@ -1668,4 +1669,30 @@ else:
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
-st.caption("🎓 Semantic Plagiarism Detection System · Streamlit")
+
+# ── Version / Update indicator ────────────────────────────────────────────────
+# Import here (deferred) to avoid slowing down the initial module load for
+# users who never reach the footer.
+from src.utils.version_check import APP_VERSION, check_for_update_sync  # noqa: E402
+
+# Cache the result for the lifetime of the Streamlit session so we don't
+# hammer the GitHub API on every rerun (e.g. widget interaction).
+if "_update_check_tag" not in st.session_state:
+    st.session_state["_update_check_tag"] = check_for_update_sync(APP_VERSION)
+
+_latest_tag: str | None = st.session_state["_update_check_tag"]
+
+_footer_col1, _footer_col2 = st.columns([3, 1])
+with _footer_col1:
+    st.caption(f"🎓 Semantic Plagiarism Detection System · v{APP_VERSION} · Streamlit")
+with _footer_col2:
+    if _latest_tag:
+        st.markdown(
+            version_check_widget_html(
+                local_version=APP_VERSION,
+                latest_tag=_latest_tag,
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("✅ Up to date")

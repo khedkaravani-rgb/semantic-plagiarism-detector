@@ -743,6 +743,35 @@ def strip_markdown_syntax(raw_text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
+def extract_text_from_epub(file: PDFInput) -> str:
+    """Extract plain text from an EPUB file."""
+    try:
+        from bs4 import BeautifulSoup
+        from ebooklib import epub
+
+        epub_file = io.BytesIO(file) if isinstance(file, bytes) else file
+
+        book = epub.read_epub(epub_file)
+
+        text_parts = []
+
+        for item in book.get_items():
+            if item.get_type() == 9:
+                soup = BeautifulSoup(
+                    item.get_content(),
+                    "html.parser",
+                )
+
+                text_parts.append(
+                    soup.get_text(" ", strip=True)
+                )
+
+        return "\n\n".join(text_parts).strip()
+
+    except Exception as exc:
+        print(f"[document_parser] Error reading EPUB: {exc}")
+        return ""
+
 
 def extract_text_from_md(file: PDFInput) -> str:
     """Extract plain text from a Markdown (.md) file.
@@ -777,6 +806,8 @@ def extract_text(
         raw = extract_text_from_docx(file)
     elif extension == "md":
         raw = extract_text_from_md(file)
+    elif extension == "epub":
+        raw = extract_text_from_epub(file)
     else:
         raw = extract_text_from_txt(file)
 

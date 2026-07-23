@@ -21,7 +21,7 @@ clear_login_attempts(username)     → None
 
 import os
 import sqlite3
-
+import json
 import bcrypt
 
 from src.db.migrations import migrate_auth_database
@@ -272,3 +272,33 @@ def clear_login_attempts(username: str) -> None:
     from src.utils.redis_cache import clear_login_attempts as redis_clear_login_attempts
     identifier = username.lower()
     redis_clear_login_attempts(identifier)
+
+def get_user_preferences(username: str) -> dict:
+    """Return user preferences as a dictionary, or empty dict if none exist."""
+    username = _validate_username(username)
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT preferences FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+
+    if row and row[0]:
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def update_user_preferences(username: str, preferences: dict) -> None:
+    """Serialize and update user preferences in the database."""
+    username = _validate_username(username)
+    prefs_str = json.dumps(preferences)
+
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET preferences = ? WHERE username = ?",
+            (prefs_str, username),
+        )
+        conn.commit()

@@ -29,8 +29,10 @@ from app.theme import (
     get_theme_name,
     inject_css,
     set_theme,
+    back_to_top_html,
 )
 from src.core.ai_detector import detect_documents_ai_probability
+from src.i18n.translator import get_text, _SUPPORTED_LANGUAGES
 from src.core.config import DEFAULT_THRESHOLDS, severity_key
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
@@ -88,6 +90,8 @@ from src.db.auth import (
     init_db,
     set_tour_completed,
     verify_user,
+    get_user_preferences,       
+    update_user_preferences,
 )
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
@@ -111,6 +115,10 @@ from src.visualization.analytics import (  # noqa: E402
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 from src.visualization.network_graph import plot_similarity_network
+from src.utils.excel_export import export_similarity_matrix_to_excel
+
+
+from src.utils.excel_export import export_similarity_matrix_to_excel
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -118,6 +126,7 @@ try:
 except ImportError:
     from utils.excel_export import export_similarity_matrix_to_excel
     from utils.json_export import export_similarity_matrix_to_json
+
 
 # Initialize corpus database
 init_corpus_db()
@@ -150,7 +159,7 @@ from src.db.auth import (
 
 try:
     from streamlit_tour import Tour
-except ImportError:
+except Exception:
     Tour = None
 
 # Initialize auth database
@@ -163,6 +172,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.markdown(back_to_top_html(), unsafe_allow_html=True)
 inject_css()
 
 init_db()
@@ -244,6 +254,10 @@ if not st.session_state.get("authenticated", False):
                         cache_session_state(SESSION_ID, "username", username)
                         cache_session_state(SESSION_ID, "role", role)
                         cache_session_state(SESSION_ID, "last_interaction", time.time())
+                        prefs = get_user_preferences(username)
+                        st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
+                        st.session_state.theme = prefs.get('theme', 'Light')
+                        set_theme(st.session_state.theme)
 
                         # Clear pending state
                         del st.session_state["pending_2fa"]
@@ -271,6 +285,10 @@ if not st.session_state.get("authenticated", False):
 
         if login_submitted:
             username = username.strip().lower()
+            prefs = get_user_preferences(username)
+            st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
+            st.session_state.theme = prefs.get('theme', 'Light')
+            set_theme(st.session_state.theme)
 
             if not username or not password:
                 from src.errors import AUTH_BLANK_CREDENTIALS
@@ -310,6 +328,9 @@ if not st.session_state.get("authenticated", False):
                                 SESSION_ID, "last_interaction", time.time()
                             )
 
+
+                st.error("Invalid username or password.")
+
                             st.success(f"Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
@@ -318,11 +339,11 @@ if not st.session_state.get("authenticated", False):
                     from src.errors import AUTH_INVALID_CREDENTIALS
 
                     st.error(AUTH_INVALID_CREDENTIALS)
+
     st.stop()
 
 
 # Active user role
-
 user_role = st.session_state.get("role", "user")
 
 
@@ -395,20 +416,38 @@ with theme_col:
         st.rerun()
 
 
+
+# ── Sidebar (ROLE RESTRICTED Settings & i18n) ─────────────────────────────────
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
-
+def save_preferences_callback():
+    if "username" in st.session_state:
+        prefs = {
+            "threshold": st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism),
+            "theme": st.session_state.get("theme_selector", "Light")
+        }
+    update_user_preferences(st.session_state.username, prefs)
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
+    # 🌐 i18n Language Selector (#144)
+    selected_lang_name = st.selectbox(
+        "🌐 Language / Idioma",
+        options=list(_SUPPORTED_LANGUAGES.values()),
+        index=0,
+        key="lang_selector",
+    )
+    lang_code = "es" if selected_lang_name == "Español" else "en"
+
+    st.markdown(f"### {get_text('settings', lang=lang_code)}")
 
     selected_theme = st.radio(
-        "Theme",
+        get_text("theme", lang=lang_code),
         options=["Light", "Dark"],
         index=0 if current_theme == "Light" else 1,
         horizontal=True,
         key="theme_selector",
+        on_change=save_preferences_callback,
     )
     if selected_theme != current_theme:
         set_theme(selected_theme)
@@ -416,10 +455,17 @@ with st.sidebar:
 
     if user_role == "admin":
         threshold = st.slider(
+
+            get_text("threshold", lang=lang_code),
+            0.50,
+            0.99,
+            value=PLAGIARISM_THRESHOLD,
+
             "Plagiarism Threshold",
             min_value=0.0,
             max_value=DEFAULT_THRESHOLDS.medium,
             value=DEFAULT_THRESHOLDS.plagiarism,
+
             step=0.01,
             help=(
                 "Controls which pairs are flagged. Severity remains Medium "
@@ -427,6 +473,7 @@ with st.sidebar:
                 f"{DEFAULT_THRESHOLDS.high:.0%}."
             ),
             key="threshold_slider",
+            on_change=save_preferences_callback,
         )
         selected_class = st.selectbox(
             "Filter by Class Section",
@@ -754,10 +801,17 @@ if (
         tour = Tour(steps=tour_steps)
         tour.start()
 
+
+# ── Main Header (Dynamic i18n Translation) ───────────────────────────────────
+st.title(get_text("title", lang=lang_code))
+st.markdown(get_text("subtitle", lang=lang_code))
+st.divider()
+
         set_tour_completed(username, True)
         st.session_state.show_tour = False
         st.success("✅ Onboarding tour completed!")
         st.rerun()
+
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
 
@@ -887,7 +941,6 @@ else:
 
     if "analysis_results" not in st.session_state:
         st.session_state.analysis_results = None
-        # Try to load from Redis cache
 
         cached_results = get_analysis_results(f"{SESSION_ID}:current")
         if cached_results is not None:
@@ -900,6 +953,24 @@ else:
         cached_signature = get_session_state(SESSION_ID, "analysis_file_signature")
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
+
+
+            faiss_index = (
+                load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
+            )
+            registry = get_chunk_registry()
+    else:
+        faiss_index = load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
+        registry = get_chunk_registry()
+
+        cached_signature = get_session_state(SESSION_ID, "analysis_file_signature")
+        if cached_signature is not None:
+            st.session_state.analysis_file_signature = cached_signature
+
+    # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
+    uploaded_files = st.file_uploader(
+        get_text("upload_title", lang=lang_code),
+        type=["pdf", "docx", "txt"],
 
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
@@ -1021,55 +1092,59 @@ else:
         uploaded_file.name: uploaded_file.getvalue() for uploaded_file in uploaded_files
     }
     # 2. GOOGLE DRIVE IMPORT SECTION (#146)
-    from src.utils.google_drive import bulk_download_drive_folder
+    try:
+        from src.utils.google_drive import bulk_download_drive_folder
+    except ImportError:
+        bulk_download_drive_folder = None
 
     if "drive_files_dict" not in st.session_state:
         st.session_state.drive_files_dict = {}
 
-    with st.expander("🌐 Import from Google Drive Folder", expanded=False):
-        st.caption(
-            "Paste a shared Google Drive folder link or ID to bulk-download assignments."
-        )
+    if bulk_download_drive_folder is not None:
+        with st.expander("🌐 Import from Google Drive Folder", expanded=False):
+            st.caption(
+                "Paste a shared Google Drive folder link or ID to bulk-download assignments."
+            )
 
-        drive_folder_input = st.text_input(
-            "Google Drive Folder Link / ID:",
-            placeholder="https://drive.google.com/drive/folders/1A2B3C...",
-            key="drive_folder_url_input",
-        )
+            drive_folder_input = st.text_input(
+                "Google Drive Folder Link / ID:",
+                placeholder="https://drive.google.com/drive/folders/1A2B3C...",
+                key="drive_folder_url_input",
+            )
 
-        drive_api_key = st.text_input(
-            "API Key (Optional):",
-            type="password",
-            key="drive_api_key_input",
-        )
+            drive_api_key = st.text_input(
+                "API Key (Optional):",
+                type="password",
+                key="drive_api_key_input",
+            )
 
-        if st.button(
-            "📥 Import Files from Drive", type="primary", use_container_width=True
-        ):
-            if not drive_folder_input.strip():
-                st.error("Please enter a valid Google Drive folder link or ID.")
-            else:
-                with st.spinner(
-                    "Connecting to Google Drive API & downloading files..."
-                ):
-                    try:
-                        downloaded_dict, downloaded_names = bulk_download_drive_folder(
-                            folder_url_or_id=drive_folder_input,
-                            api_key=drive_api_key.strip() if drive_api_key else None,
-                        )
-
-                        if downloaded_dict:
-                            st.session_state.drive_files_dict.update(downloaded_dict)
-                            st.success(
-                                f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
+            if st.button(
+                "📥 Import Files from Drive", type="primary", use_container_width=True
+            ):
+                if not drive_folder_input.strip():
+                    st.error("Please enter a valid Google Drive folder link or ID.")
+                else:
+                    with st.spinner(
+                        "Connecting to Google Drive API & downloading files..."
+                    ):
+                        try:
+                            downloaded_dict, downloaded_names = bulk_download_drive_folder(
+                                folder_url_or_id=drive_folder_input,
+                                api_key=drive_api_key.strip() if drive_api_key else None,
                             )
-                            st.rerun()
-                        else:
-                            st.warning(
-                                "No supported files (.pdf, .docx, .txt) found in this Drive folder."
-                            )
-                    except Exception as err:
-                        st.error(f"Failed to import from Google Drive: {str(err)}")
+
+                            if downloaded_dict:
+                                st.session_state.drive_files_dict.update(downloaded_dict)
+                                st.success(
+                                    f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
+                                )
+                                st.rerun()
+                            else:
+                                st.warning(
+                                    "No supported files (.pdf, .docx, .txt) found in this Drive folder."
+                                )
+                        except Exception as err:
+                            st.error(f"Failed to import from Google Drive: {str(err)}")
 
     # 3. MERGE LOCAL AND DRIVE FILE BYTES
     file_bytes_dict = {}
@@ -1290,10 +1365,15 @@ else:
         file_bytes_dict: dict[str, bytes],
         ocr_language: str,
         ocr_dpi: int,
+
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+
         existing_index=None,
         existing_registry=None,
         url_text: str = None,
         url_filename: str = None,
+
     ):
         raw_texts = {}
         failed_files = []
@@ -1332,7 +1412,11 @@ else:
                 ocr_dpi=ocr_dpi,
             )
 
-        chunked_docs = chunk_documents(raw_texts)
+        chunked_docs = chunk_documents(
+            raw_texts,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
         translated_chunked_docs = {}
 
         for doc_name, chunks in chunked_docs.items():
@@ -1377,6 +1461,16 @@ else:
             ai_probabilities,
         )
 
+
+    with st.spinner("🧠 Processing files and building embeddings…"):
+        analysis_results = run_pipeline(
+            file_bytes_dict,
+            ocr_language,
+            ocr_dpi,
+            chunk_size,
+            chunk_overlap,
+        )
+
     try:
         with st.spinner("🧠 Processing files and building embeddings…"):
             analysis_results = run_pipeline(file_bytes_dict, ocr_language, ocr_dpi)
@@ -1387,6 +1481,7 @@ else:
         if exc.failed_files:
             st.warning(f"Failed files: {', '.join(exc.failed_files)}")
         st.stop()
+
 
     (
         raw_texts,
@@ -1401,6 +1496,8 @@ else:
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
     flags = flag_plagiarism(active_sim_df, threshold=threshold)
+
+
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
 
@@ -1418,6 +1515,7 @@ else:
     if "sent_alerts" not in st.session_state:
         st.session_state.sent_alerts = set()
 
+
     for flag in flags:
         alert_key = (flag["doc_a"], flag["doc_b"])
         if alert_key not in st.session_state.sent_alerts:
@@ -1431,21 +1529,32 @@ else:
             except Exception:
                 pass
 
-    # ── Summary Metrics ───────────────────────────────────────────────────────
+    # ── Summary Metrics (Translated i18n Labels) ─────────────────────────────────
 
-    st.subheader("📊 Analysis Summary")
+    st.subheader(get_text("analysis_summary", lang=lang_code))
     doc_names = list(raw_texts.keys())
     n_docs = len(doc_names)
     total_pairs = n_docs * (n_docs - 1) // 2 if n_docs > 1 else 0
     n_flagged = len(flags)
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("📄 Documents", n_docs)
-    col2.metric("🔗 Pairs", total_pairs)
-    col3.metric("🚨 Flagged", n_flagged)
-    col4.metric("🗂️ FAISS Vectors", faiss_index.ntotal if faiss_index is not None else 0)
+    col1.metric(get_text("metric_docs", lang=lang_code), n_docs)
+    col2.metric(get_text("metric_pairs", lang=lang_code), total_pairs)
+    col3.metric(get_text("metric_flagged", lang=lang_code), n_flagged)
+    col4.metric(get_text("metric_faiss", lang=lang_code), faiss_index.ntotal if faiss_index is not None else 0)
     col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
+
+
+    # ── Application Tabs (Translated i18n Headers) ────────────────────────────
+    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
+        [
+            get_text("tab_warnings", lang=lang_code),
+            get_text("tab_faiss", lang=lang_code),
+            get_text("tab_matrix", lang=lang_code),
+            get_text("tab_heatmap", lang=lang_code),
+            get_text("tab_drill", lang=lang_code),
+            get_text("tab_users", lang=lang_code),
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
     (
@@ -1465,20 +1574,21 @@ else:
             "🔬 Pair Drill-Down",
             "📊 Analytics",
             "👥 User Management",
+
         ]
     )
 
     # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
 
     with tab_warnings:
-        st.subheader("⚠️ Plagiarism Warnings")
+        st.subheader(get_text("tab_warnings", lang=lang_code))
         render_warning_controls(
             flags, threshold=threshold, ai_probabilities=ai_probabilities
         )
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
-        st.subheader("⚡ FAISS Vector Search")
+        st.subheader(get_text("tab_faiss", lang=lang_code))
         st.info(f"Index total: {faiss_index.ntotal} vectors.")
 
         faiss_query = st.text_input(
@@ -1509,7 +1619,10 @@ else:
 
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
+
+        st.subheader(get_text("tab_matrix", lang=lang_code))
         st.subheader("📋 Similarity Matrix")
+
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
 
@@ -1532,7 +1645,7 @@ else:
 
             with col_csv:
                 st.download_button(
-                    "⬇️ Download CSV",
+                    get_text("download_csv", lang=lang_code),
                     active_sim_df.to_csv().encode("utf-8"),
                     "similarity_matrix.csv",
                     "text/csv",
@@ -1557,7 +1670,7 @@ else:
                     active_sim_df, threshold=threshold
                 )
                 st.download_button(
-                    "📊 Export as Styled Excel (.xlsx)",
+                    get_text("download_excel", lang=lang_code),
                     excel_data,
                     "similarity_matrix_styled.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1566,6 +1679,27 @@ else:
 
     # ══ TAB 4: HEATMAP ════════════════════════════════════════════════════════
     with tab_heatmap:
+
+        st.subheader(get_text("tab_heatmap", lang=lang_code))
+        heatmap_fig = plot_similarity_heatmap(
+            active_sim_df,
+            title="Document Semantic Similarity",
+            threshold=threshold,
+            theme_colors=get_colors(),
+        )
+        st.pyplot(heatmap_fig, use_container_width=True)
+
+    # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
+    with tab_drill:
+        st.subheader(get_text("tab_drill", lang=lang_code))
+        c1, c2 = st.columns(2)
+        with c1:
+            doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
+        with c2:
+            doc_b = st.selectbox(
+                "Document B", [d for d in doc_names if d != doc_a], index=0, key="db"
+            )
+
         st.subheader("🗺️ Similarity Heatmap")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
@@ -1648,6 +1782,7 @@ else:
                     key="db",
                 )
 
+
         score = float(active_sim_df.loc[doc_a, doc_b])
         st.markdown(f"**Overall Similarity:** `{score:.1%}`")
         st.progress(float(score))
@@ -1674,7 +1809,7 @@ else:
                     st.write(f"**{doc_a}:** {ca}")
                     st.write(f"**{doc_b}:** {cb}")
 
-        # --- In-App PDF Preview with Highlighted Matches (#145) ---
+        # --- In-App PDF Preview with Highlighted Matches ---
         with drill_tab_viewer:
             st.subheader("📄 In-App PDF Preview with Highlighted Matches")
             selected_view_doc = st.radio(
@@ -1684,7 +1819,6 @@ else:
                 key="doc_viewer_select",
             )
 
-            # Retrieve file bytes directly from uploaded files dict
             doc_source = file_bytes_dict.get(selected_view_doc)
             matching_chunks_to_highlight = (
                 chunks_a if selected_view_doc == doc_a else chunks_b
@@ -1765,7 +1899,7 @@ else:
     # ══ TAB 7: User Management ═══════════════════════════════════════════════════
     # ══ TAB 6: USERS ══════════════════════════════════════════════════════════
     with tab_users:
-        st.subheader("👥 User Management")
+        st.subheader(get_text("tab_users", lang=lang_code))
         users = get_all_users()
         if users:
             st.dataframe(pd.DataFrame(users), use_container_width=True)

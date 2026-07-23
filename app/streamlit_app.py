@@ -562,6 +562,7 @@ with st.sidebar:
         if existing_docs:
             st.write(f"**{len(existing_docs)}** documents in database")
             for doc in existing_docs:
+                st.markdown('<div class="doc-row">', unsafe_allow_html=True)
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.text(f"📄 {doc['filename']}")
@@ -591,6 +592,7 @@ with st.sidebar:
                     if st.button("Cancel", key="cancel_delete_doc"):
                         del st.session_state._pending_delete
                         st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="clear-all-container">', unsafe_allow_html=True)
         if st.button("🗑️ Clear All Documents", key="clear_all_documents_button", use_container_width=True):

@@ -567,6 +567,73 @@ with st.sidebar:
                                 os.remove(_INDEX_PATH)
                         st.rerun()
 
+        # ── Generate Mock Data (Issue #255) ───────────────────────────────────
+        # Hidden developer utility: generates 5 fake essays via Faker so the
+        # app is immediately usable after cloning without manual PDF uploads.
+        with st.expander("🧪 Developer Tools", expanded=False):
+            st.caption(
+                "Generate fake student essays to populate the corpus and preview "
+                "the app without uploading real PDFs."
+            )
+            mock_class = st.text_input(
+                "Mock Class/Section",
+                value="Demo Class",
+                key="mock_class_input",
+                help="Class section label assigned to all generated essays.",
+            )
+            mock_assignment = st.text_input(
+                "Mock Assignment Title",
+                value="Demo Assignment",
+                key="mock_assignment_input",
+                help="Assignment title assigned to all generated essays.",
+            )
+            if st.button(
+                "⚗️ Generate Mock Data",
+                key="generate_mock_data_button",
+                use_container_width=True,
+                help="Creates 5 fake student essays using the Faker library, "
+                     "stores them in corpus.db, and rebuilds the FAISS index.",
+            ):
+                try:
+                    from src.utils.mock_data import generate_mock_data as _gen_mock
+
+                    with st.spinner("⚗️ Generating mock essays and building FAISS index…"):
+                        result = _gen_mock(
+                            num_essays=5,
+                            class_section=mock_class.strip() or "Demo Class",
+                            assignment_title=mock_assignment.strip() or "Demo Assignment",
+                            chunk_size=st.session_state.get("chunk_size_slider", 500),
+                            chunk_overlap=st.session_state.get("chunk_overlap_slider", 50),
+                        )
+
+                    added = result["essays"]
+                    skipped = result["skipped"]
+                    ntotal = result["faiss_ntotal"]
+
+                    if added:
+                        st.success(
+                            f"✅ Added **{len(added)}** mock essay(s): "
+                            + ", ".join(name for _, name in added)
+                        )
+                    if skipped:
+                        st.info(
+                            f"ℹ️ {len(skipped)} essay(s) already existed and were skipped."
+                        )
+                    st.success(
+                        f"🗂️ FAISS index rebuilt with **{ntotal}** total vectors."
+                    )
+                    # Invalidate cached analysis so the UI reloads with new docs
+                    st.session_state.analysis_results = None
+                    st.rerun()
+
+                except ImportError:
+                    st.error(
+                        "❌ The `faker` package is not installed. "
+                        "Run `pip install faker` and restart the app."
+                    )
+                except Exception as _mock_err:
+                    st.error(f"❌ Mock data generation failed: {_mock_err}")
+
         st.markdown('<div class="clear-all-container">', unsafe_allow_html=True)
         if st.button("🗑️ Clear All Documents", key="clear_all_documents_button", use_container_width=True):
             clear_all_dialog()

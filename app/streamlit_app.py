@@ -1017,13 +1017,57 @@ else:
             except Exception as e:
                 st.error(f"❌ Failed to parse CSV file '{f.name}': {str(e)}")
 
-    st.markdown("### 🔗 Or Paste URL")
-    url_input = st.text_input(
-        "Paste a direct URL (e.g., Wikipedia article, Medium blog post)",
-        placeholder="https://example.com/article",
-        key="url_input",
-        help="The system will fetch and extract text from the webpage for plagiarism detection.",
-    )
+    st.markdown("### 🔗 Or Upload via Public URL")
+
+    # Initialise URL-related session state keys so they persist across reruns
+    if "url_text" not in st.session_state:
+        st.session_state.url_text = None
+    if "url_filename" not in st.session_state:
+        st.session_state.url_filename = None
+    if "_last_fetched_url" not in st.session_state:
+        st.session_state._last_fetched_url = ""
+
+    _url_col, _btn_col = st.columns([5, 1])
+    with _url_col:
+        url_input = st.text_input(
+            "Paste a direct URL to a document or webpage",
+            placeholder="https://example.com/paper.pdf",
+            key="url_input",
+            help="Enter a public URL to a PDF, DOCX, TXT file, or webpage. Click \"Fetch\" to load it.",
+        )
+    with _btn_col:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        fetch_url_btn = st.button("Fetch", key="fetch_url_btn", use_container_width=True)
+
+    # Clear cached URL result when the user changes the URL field
+    if url_input.strip() != st.session_state._last_fetched_url:
+        if st.session_state.url_text is not None:
+            st.session_state.url_text = None
+            st.session_state.url_filename = None
+
+    # Fetch only when the button is explicitly clicked
+    if fetch_url_btn and url_input and url_input.strip():
+        try:
+            from src.core.document_parser import extract_text_from_url
+            with st.spinner("🔍 Fetching and extracting text from URL..."):
+                _fetched_text = extract_text_from_url(url_input.strip())
+                if not _fetched_text or len(_fetched_text.strip()) < 50:
+                    st.warning("⚠️ The URL did not return enough text content for analysis.")
+                else:
+                    from urllib.parse import urlparse as _urlparse
+                    _parsed = _urlparse(url_input.strip())
+                    st.session_state.url_text = _fetched_text
+                    st.session_state.url_filename = f"webpage_{_parsed.netloc.replace('.', '_')}.txt"
+                    st.session_state._last_fetched_url = url_input.strip()
+                    st.success(f"✅ Successfully extracted {len(_fetched_text)} characters from the URL.")
+        except Exception as _e:
+            st.error(f"❌ Failed to fetch URL: {str(_e)}")
+            st.session_state.url_text = None
+            st.session_state.url_filename = None
+
+    # Show status of currently loaded URL document
+    if st.session_state.url_text is not None:
+        st.info(f"🔗 URL document loaded: **{st.session_state.url_filename}** ({len(st.session_state.url_text)} characters)")
 
     file_bytes_dict = {
         uploaded_file.name: uploaded_file.getvalue() for uploaded_file in uploaded_files
@@ -1122,24 +1166,9 @@ else:
             f.seek(0)
 
     # Allow analysis with existing index even without new uploads
-    url_text = None
-    url_filename = None
-    if url_input and url_input.strip():
-        try:
-            from src.core.document_parser import extract_text_from_url
-            with st.spinner("🔍 Fetching and extracting text from URL..."):
-                url_text = extract_text_from_url(url_input.strip())
-                if not url_text or len(url_text.strip()) < 50:
-                    st.warning("⚠️ The URL did not contain enough text content for analysis.")
-                    url_text = None
-                else:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(url_input.strip())
-                    url_filename = f"webpage_{parsed.netloc.replace('.', '_')}.txt"
-                    st.success(f"✅ Successfully extracted {len(url_text)} characters from the webpage.")
-        except Exception as e:
-            st.error(f"❌ Failed to fetch URL: {str(e)}")
-            url_text = None
+    # Read URL result from session state (populated by the Fetch button above)
+    url_text = st.session_state.url_text
+    url_filename = st.session_state.url_filename
 
     has_files = len(file_bytes_dict) >= 2
     has_url = url_text is not None

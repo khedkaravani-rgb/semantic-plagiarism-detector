@@ -1,6 +1,7 @@
 """Tests for src/utils/pdf_report.py PDF plagiarism report generation."""
 
 from io import BytesIO
+
 from PyPDF2 import PdfReader
 
 from src.utils.pdf_report import (
@@ -55,3 +56,111 @@ def test_similarity_color_palette():
     assert high_color.hexval().lower() == "0xff4b4b"
     assert medium_color.hexval().lower() == "0xffa500"
     assert low_color.hexval().lower() == "0x21c55d"
+
+
+def test_compress_pdf_buffer_reduces_size(monkeypatch):
+    # Mock compress_pdf_buffer to get the raw uncompressed buffer size
+    from src.utils import pdf_report
+
+    original_compress = pdf_report.compress_pdf_buffer
+
+    monkeypatch.setattr(pdf_report, "compress_pdf_buffer", lambda x: x)
+
+    # Generate uncompressed report (with many matching pairs to make it larger)
+    uncompressed_buffer = generate_plagiarism_report(
+        doc_a="student_a.pdf",
+        doc_b="student_b.pdf",
+        overall_similarity=0.934,
+        threshold=0.59,
+        top_pairs=[
+            ("First matching paragraph.", "Second matching paragraph.", 0.96),
+        ]
+        * 50,
+    )
+    uncompressed_size = len(uncompressed_buffer.getvalue())
+
+    # Call original compress function on the uncompressed buffer
+    compressed_buffer = original_compress(uncompressed_buffer)
+    compressed_size = len(compressed_buffer.getvalue())
+
+    # Verify that the compressed version is smaller
+    assert compressed_size < uncompressed_size
+
+    # Verify it is still a valid PDF and the text matches
+    compressed_bytes = compressed_buffer.getvalue()
+    assert compressed_bytes.startswith(b"%PDF")
+    text = _read_text(compressed_bytes)
+    assert "student_a.pdf" in text
+    assert "First matching paragraph" in text
+
+
+def test_compress_pdf_buffer_fallback(monkeypatch):
+    import fitz
+
+    def mock_fitz_open(*args, **kwargs):
+        raise Exception("Mock PyMuPDF error")
+
+    monkeypatch.setattr(fitz, "open", mock_fitz_open)
+
+    # Generate plagiarism report which will trigger the fallback pipeline
+    compressed_buffer = generate_plagiarism_report(
+        doc_a="student_a.pdf",
+        doc_b="student_b.pdf",
+        overall_similarity=0.934,
+        threshold=0.59,
+        top_pairs=[
+            ("First matching paragraph.", "Second matching paragraph.", 0.96),
+        ],
+    )
+    compressed_bytes = compressed_buffer.getvalue()
+
+    # The PDF should still be valid even when PyMuPDF fails
+    assert compressed_bytes.startswith(b"%PDF")
+    text = _read_text(compressed_bytes)
+    assert "student_a.pdf" in text
+
+
+def test_compress_pdf_buffer_all_fail(monkeypatch):
+    import sys
+
+    import fitz
+
+    def mock_fitz_open(*args, **kwargs):
+        raise Exception("Mock PyMuPDF error")
+
+    monkeypatch.setattr(fitz, "open", mock_fitz_open)
+
+    # Disable pypdf and PyPDF2 locally to test full fallback safety
+    original_pypdf = sys.modules.get("pypdf")
+    original_PyPDF2 = sys.modules.get("PyPDF2")
+    sys.modules["pypdf"] = None
+    sys.modules["PyPDF2"] = None
+
+    try:
+        # Generate plagiarism report where all compression libraries are unavailable/fail
+        pdf_buffer = generate_plagiarism_report(
+            doc_a="student_a.pdf",
+            doc_b="student_b.pdf",
+            overall_similarity=0.934,
+            threshold=0.59,
+            top_pairs=[
+                ("First matching paragraph.", "Second matching paragraph.", 0.96),
+            ],
+        )
+        pdf_bytes = pdf_buffer.getvalue()
+
+        # The PDF generation should still produce a valid uncompressed PDF report
+        assert pdf_bytes.startswith(b"%PDF")
+        text = _read_text(pdf_bytes)
+        assert "student_a.pdf" in text
+    finally:
+        # Restore sys.modules safely
+        if original_pypdf is not None:
+            sys.modules["pypdf"] = original_pypdf
+        else:
+            sys.modules.pop("pypdf", None)
+
+        if original_PyPDF2 is not None:
+            sys.modules["PyPDF2"] = original_PyPDF2
+        else:
+            sys.modules.pop("PyPDF2", None)

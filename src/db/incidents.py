@@ -9,6 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from src.db.migrations import migrate_corpus_database
+
+from src.core.config import (
+    normalize_score,
+    normalize_severity_label,
+    severity_from_score,
+)
+
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "corpus.db"
 VALID_REVIEW_STATUSES = {"Pending", "Resolved"}
 CSV_COLUMNS = [
@@ -32,22 +40,21 @@ def _normalise_pair(doc_a: str, doc_b: str) -> tuple[str, str]:
 
 def _normalise_score(value: Any) -> float:
     try:
-        score = float(value)
+        return normalize_score(float(value))
     except (TypeError, ValueError):
-        score = 0.0
-    return min(1.0, max(0.0, score))
+        return 0.0
 
 
 def _severity_rank(flag: Mapping[str, Any]) -> str:
     raw = str(flag.get("severity", "")).strip()
     if raw:
-        return raw
+        try:
+            return normalize_severity_label(raw)
+        except ValueError:
+            pass
+
     score = _normalise_score(flag.get("similarity", 0.0))
-    if score >= 0.90:
-        return "High"
-    if score >= 0.59:
-        return "Medium"
-    return "Low"
+    return severity_from_score(score)
 
 
 def build_incident_id(doc_a: str, doc_b: str) -> str:
@@ -56,28 +63,20 @@ def build_incident_id(doc_a: str, doc_b: str) -> str:
     return f"INC-{digest[:12].upper()}"
 
 
-def init_incident_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
+def init_incident_db(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> None:
+    """Create or upgrade the shared corpus/incident database."""
     with closing(sqlite3.connect(str(db_path))) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS plagiarism_incidents (
-                incident_id TEXT PRIMARY KEY,
-                document_a TEXT NOT NULL,
-                document_b TEXT NOT NULL,
-                similarity_score REAL NOT NULL,
-                severity_rank TEXT NOT NULL,
-                review_status TEXT NOT NULL DEFAULT 'Pending'
-                    CHECK (review_status IN ('Pending', 'Resolved')),
-                date_flagged TEXT NOT NULL,
-                last_seen TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_incidents_status "
-            "ON plagiarism_incidents(review_status)"
-        )
-        conn.commit()
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            migrate_corpus_database(conn)
+        except sqlite3.Error as exc:
+            conn.rollback()
+            raise sqlite3.Error(
+                f"Failed to initialize incident database: {exc}"
+            ) from exc
+
 
 
 def _validate_incident(flag: Mapping[str, Any]) -> tuple[bool, str]:
@@ -116,6 +115,9 @@ def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
     return [dict(row) for row in rows]
 
+
+
+
 def sync_flagged_incidents(
     flags: Iterable[Mapping[str, Any]],
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -124,8 +126,10 @@ def sync_flagged_incidents(
 ) -> list[dict[str, Any]]:
     init_incident_db(db_path)
     timestamp = now or _utc_now_iso()
+
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
+
         for flag in flags:
             is_valid, message = _validate_incident(flag)
 
@@ -141,25 +145,62 @@ def sync_flagged_incidents(
                 INSERT INTO plagiarism_incidents (
                     incident_id, document_a, document_b, similarity_score,
                     severity_rank, review_status, date_flagged, last_seen
+
+
+        try:
+            for flag in flags:
+                doc_a = str(flag.get("doc_a", "")).strip()
+                doc_b = str(flag.get("doc_b", "")).strip()
+
+                if not doc_a or not doc_b or doc_a == doc_b:
+                    continue
+
+                first, second = _normalise_pair(doc_a, doc_b)
+
+                conn.execute(
+                    """
+                    INSERT INTO plagiarism_incidents (
+                        incident_id, document_a, document_b,
+                        similarity_score, severity_rank,
+                        review_status, date_flagged, last_seen
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)
+                    ON CONFLICT(incident_id) DO UPDATE SET
+                        similarity_score = excluded.similarity_score,
+                        severity_rank = excluded.severity_rank,
+                        last_seen = excluded.last_seen
+                    """,
+                    (
+                        build_incident_id(first, second),
+                        first,
+                        second,
+                        _normalise_score(flag.get("similarity", 0.0)),
+                        _severity_rank(flag),
+                        timestamp,
+                        timestamp,
+                    ),
+
                 )
-                VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)
-                ON CONFLICT(incident_id) DO UPDATE SET
-                    similarity_score = excluded.similarity_score,
-                    severity_rank = excluded.severity_rank,
-                    last_seen = excluded.last_seen
-                """,
-                (
-                    build_incident_id(first, second),
-                    first,
-                    second,
-                    _normalise_score(flag.get("similarity", 0.0)),
-                    _severity_rank(flag),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-        conconn.commit()
-        return _fetch_all_incidents(conn)
+
+            conn.commit()
+
+            rows = conn.execute(
+                """
+                SELECT incident_id, document_a, document_b,
+                       similarity_score, severity_rank,
+                       review_status, date_flagged, last_seen
+                FROM plagiarism_incidents
+                ORDER BY date_flagged DESC, incident_id ASC
+                """
+            ).fetchall()
+
+            return [dict(row) for row in rows]
+
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise sqlite3.Error(f"Failed to synchronize incidents: {e}") from e
+
+
 
 
 def get_all_incidents(
@@ -167,7 +208,7 @@ def get_all_incidents(
 ) -> list[dict[str, Any]]:
     init_incident_db(db_path)
     with closing(sqlite3.connect(str(db_path))) as conn:
-       return _fetch_all_incidents(conn)
+        return _fetch_all_incidents(conn)
 
 
 def update_review_status(
@@ -176,18 +217,27 @@ def update_review_status(
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> bool:
     status = str(review_status).strip().title()
+
     if status not in VALID_REVIEW_STATUSES:
         raise ValueError(
             f"review_status must be one of {sorted(VALID_REVIEW_STATUSES)}"
         )
+
     init_incident_db(db_path)
+
     with closing(sqlite3.connect(str(db_path))) as conn:
-        cursor = conn.execute(
-            "UPDATE plagiarism_incidents SET review_status = ? WHERE incident_id = ?",
-            (status, str(incident_id).strip()),
-        )
-        conn.commit()
-        return cursor.rowcount > 0
+        try:
+            cursor = conn.execute(
+                "UPDATE plagiarism_incidents SET review_status = ? WHERE incident_id = ?",
+                (status, str(incident_id).strip()),
+            )
+
+            conn.commit()
+            return cursor.rowcount > 0
+
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise sqlite3.Error(f"Failed to update review status: {e}") from e
 
 
 def incidents_to_csv(incidents: Iterable[Mapping[str, Any]]) -> bytes:
@@ -215,3 +265,60 @@ def export_current_flags_csv(
 ) -> bytes:
     sync_flagged_incidents(flags, db_path)
     return incidents_to_csv(get_all_incidents(db_path))
+
+
+def get_high_severity_trends(
+    days: int = 30,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> list[dict[str, Any]]:
+    """
+    Get daily count of High severity incidents over the specified number of days.
+    Returns list of dicts with 'date' and 'count' keys.
+    """
+    init_incident_db(db_path)
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT 
+                DATE(date_flagged) as date,
+                COUNT(*) as count
+            FROM plagiarism_incidents
+            WHERE severity_rank = 'High'
+                AND date_flagged >= datetime('now', '-' || ? || ' days')
+            GROUP BY DATE(date_flagged)
+            ORDER BY date ASC
+            """,
+            (days,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_most_plagiarized_documents(
+    limit: int = 10,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> list[dict[str, Any]]:
+    """
+    Get the most frequently plagiarized documents based on incident count.
+    Returns list of dicts with 'document_name' and 'incident_count' keys.
+    """
+    init_incident_db(db_path)
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT 
+                document_name,
+                COUNT(*) as incident_count
+            FROM (
+                SELECT document_a as document_name FROM plagiarism_incidents
+                UNION ALL
+                SELECT document_b as document_name FROM plagiarism_incidents
+            )
+            GROUP BY document_name
+            ORDER BY incident_count DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]

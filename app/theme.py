@@ -627,6 +627,14 @@ def inject_css() -> None:
             div[data-testid="stMetricValue"] > div {{
                 font-size: 1.3rem !important;
             }}
+
+            /* Issue #258: when the sidebar is opened on a phone/small
+               tablet, keep it from covering the whole screen so the
+               similarity matrix / heatmap stay legible behind it. */
+            [data-testid="stSidebar"] {{
+                min-width: 85vw !important;
+                max-width: 85vw !important;
+            }}
         }}
     </style>
     """

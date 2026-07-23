@@ -516,6 +516,20 @@ def extract_text_from_pdf(
     )
 
     pdf_bytes = _read_pdf_bytes(file)
+
+    # Validate actual file magic bytes to prevent renamed malicious files (Issue #252)
+    try:
+        import magic
+        mime_type = magic.from_buffer(pdf_bytes, mime=True)
+        if mime_type != "application/pdf":
+            print(f"[document_parser] Security warning: Invalid MIME type '{mime_type}' for PDF.")
+            return ""
+    except ImportError:
+        # Fallback manual magic byte check if python-magic is not installed
+        if not pdf_bytes.lstrip().startswith(b"%PDF-"):
+            print("[document_parser] Security warning: Invalid magic bytes for PDF.")
+            return ""
+
     page_lines: List[List[str]] = []
 
     try:

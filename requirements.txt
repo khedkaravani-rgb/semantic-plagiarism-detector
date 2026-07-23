@@ -17,6 +17,7 @@ PyPDF2>=3.0.0                    # Legacy PDF manipulation support
 reportlab>=4.0.0                 # PDF document generation
 pytesseract>=0.3.13              # OCR text extraction from scanned images
 Pillow>=10.0.0                   # Image processing library
+python-magic>=0.4.27             # File magic bytes verification
 
 # ── Web UI ────────────────────────────────────────────────────────────────────
 streamlit>=1.35.0                # Dashboard framework

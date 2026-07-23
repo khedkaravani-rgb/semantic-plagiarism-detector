@@ -219,6 +219,21 @@ def inject_css() -> None:
             flex-shrink: 0;
         }}
 
+        /* ── Document row (sidebar) ─────────────────────────────────── */
+
+        .doc-row {{
+            border-radius: 8px;
+            padding: 4px 8px;
+            margin-bottom: 2px;
+            transition: background-color 0.18s ease, box-shadow 0.18s ease;
+            cursor: default;
+        }}
+
+        .doc-row:hover {{
+            background-color: var(--neutral-soft);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }}
+
         /* ── Metric cards ───────────────────────────────────────────── */
 
         div[data-testid="stMetric"] {{

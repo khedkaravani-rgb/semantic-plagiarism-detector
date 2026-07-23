@@ -8,9 +8,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
-
 from src.db.migrations import migrate_corpus_database
-
 from src.core.config import (
     normalize_score,
     normalize_severity_label,
@@ -322,3 +320,22 @@ def get_most_plagiarized_documents(
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+def add_false_positive(doc_a: str, doc_b: str, db_path: str | Path = DEFAULT_DB_PATH) -> None:
+    """Inserts a dismissed pair into the false_positives table."""
+    init_incident_db(db_path) 
+    norm_a, norm_b = _normalise_pair(doc_a, doc_b)
+    
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO false_positives (document_a, document_b) VALUES (?, ?)",
+            (norm_a, norm_b)
+        )
+        conn.commit()
+
+def get_false_positives(db_path: str | Path = DEFAULT_DB_PATH) -> set[tuple[str, str]]:
+    """Returns a set of all normalized dismissed pairs for fast filtering."""
+    init_incident_db(db_path) 
+    
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute("SELECT document_a, document_b FROM false_positives").fetchall()
+        return set((row[0], row[1]) for row in rows)

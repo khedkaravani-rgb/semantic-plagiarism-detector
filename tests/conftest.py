@@ -20,10 +20,16 @@ TensorFlow / Keras installation. The embedding_model tests mock _get_model()
 directly, so no real model is loaded.
 """
 
+import os
 import pathlib
 import shutil
 import sys
 import types
+
+# ── Redis Test Database Isolation ─────────────────────────────────────────
+# Use a separate Redis database (1 instead of 0) during tests so that running
+# the test suite does not flush the active development session cache.
+os.environ.setdefault("REDIS_DB", "1")
 
 import pytest
 from unittest.mock import MagicMock

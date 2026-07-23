@@ -15,7 +15,6 @@ import pathlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Import version_check directly to avoid pulling in the heavy src/__init__.py
@@ -97,7 +96,6 @@ class TestFetchLatestGithubVersion:
 
     def test_returns_tag_name_on_success(self) -> None:
         """A well-formed 200 response returns the tag_name string."""
-        import httpx  # noqa: PLC0415
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock(return_value=None)

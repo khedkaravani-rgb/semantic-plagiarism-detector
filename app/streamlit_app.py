@@ -36,6 +36,7 @@ from app.theme import (
     inject_css,
     set_theme,
 )
+
 from src.core.ai_detector import detect_documents_ai_probability
 from src.core.config import DEFAULT_THRESHOLDS, severity_key
 from src.core.document_parser import (
@@ -434,8 +435,8 @@ with st.sidebar:
             step=0.01,
             help=(
                 "Controls which pairs are flagged. Severity remains Medium "
-                f"at {DEFAULT_THRESHOLDS.medium:.0%} and High at "
-                f"{DEFAULT_THRESHOLDS.high:.0%}."
+                f"at {DEFAULT_THRESHOLDS.medium:.0%} and High "
+                f"at {DEFAULT_THRESHOLDS.high:.0%}."
             ),
             key="threshold_slider",
             on_change=save_preferences_callback,
@@ -565,7 +566,6 @@ with st.sidebar:
         if st.button("🗑️ Clear All Documents", key="clear_all_documents_button", use_container_width=True):
             clear_all_dialog()
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if Tour is not None and user_role == "admin" and not get_tour_completed(st.session_state.username):
@@ -813,17 +813,6 @@ else:
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
 
-            faiss_index = (
-                load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
-            )
-            registry = get_chunk_registry()
-    else:
-        faiss_index = load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
-        registry = get_chunk_registry()
-
-        cached_signature = get_session_state(SESSION_ID, "analysis_file_signature")
-        if cached_signature is not None:
-            st.session_state.analysis_file_signature = cached_signature
 
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
@@ -984,6 +973,7 @@ else:
                             st.error(f"Failed to import from Google Drive: {str(err)}")
 
     # 3. MERGE LOCAL AND DRIVE FILE BYTES
+    file_bytes_dict = {}
     if uploaded_files:
         # Re-initialize to handle zip/csv extraction correctly instead of raw bytes
         file_bytes_dict = {}
@@ -1389,9 +1379,9 @@ else:
         else:
             def _highlight(val: Any) -> str:
                 tier = severity_key(float(val))
-                if tier == "high": 
+                if tier == "high":
                     return "background-color:#ff4b4b;color:white;font-weight:bold;"
-                if tier == "medium": 
+                if tier == "medium":
                     return "background-color:#ffa500;color:white;font-weight:bold;"
                 return ""
 
@@ -1467,7 +1457,6 @@ else:
 
                     if point_index is not None and 0 <= point_index < len(doc_names):
                         clicked_document_id = doc_names[point_index]
-                        # Only rerun if it actually changed
                         if st.session_state.get("selected_document_id") != clicked_document_id:
                             st.session_state.selected_document_id = clicked_document_id
                             st.rerun()
@@ -1479,6 +1468,16 @@ else:
     with tab_drill:
         st.subheader("🔬 Pair Drill-Down")
         st.caption("Inspect chunk-level similarity between any two documents.")
+
+        if "expand_all_drill" not in st.session_state:
+            st.session_state.expand_all_drill = False
+        expand_all_drill = st.toggle(
+            "Expand All",
+            value=st.session_state.expand_all_drill,
+            key="toggle_expand_all_drill",
+        )
+        st.session_state.expand_all_drill = expand_all_drill
+
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
@@ -1518,7 +1517,10 @@ else:
                 for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
                     is_exact = "".join(ca.split()) == "".join(cb.split())
                     badge = " :green[[Exact Match]]" if is_exact else ""
-                    with st.expander(f"#{rank} — Similarity: {sim:.1%}{badge}"):
+                    with st.expander(
+                        f"#{rank} — {doc_a} ↔ {doc_b} — {sim:.1%}{badge}",
+                        expanded=st.session_state.expand_all_drill or (rank == 1),
+                    ):
                         st.write(f"**{doc_a}:** {ca}")
                         st.write(f"**{doc_b}:** {cb}")
 

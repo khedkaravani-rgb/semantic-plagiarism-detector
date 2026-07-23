@@ -169,11 +169,16 @@ except Exception:
 init_db()
 
 # Page Configuration
+# NOTE: initial_sidebar_state="auto" lets Streamlit decide the sidebar's
+# starting state based on viewport width. On screens narrower than the
+# "md" breakpoint (768px) — phones and small tablets — the sidebar starts
+# collapsed so it doesn't cover the similarity matrix / heatmap. On wider
+# screens it behaves the same as "expanded". See issue #258.
 st.set_page_config(
     page_title="Semantic Plagiarism Detector",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 st.markdown(back_to_top_html(), unsafe_allow_html=True)
 inject_css()

@@ -91,6 +91,24 @@ class RedisCache:
         except Exception:
             return False
 
+    def ping(self) -> tuple[bool, float | None]:
+        """Ping Redis and measure round-trip latency.
+
+        Returns:
+            Tuple of (connected: bool, latency_ms: float | None).
+            latency_ms is None if the connection is unavailable.
+        """
+        if self._client is None:
+            return False, None
+        try:
+            import time
+            start = time.monotonic()
+            self._client.ping()
+            elapsed = (time.monotonic() - start) * 1000
+            return True, round(elapsed, 1)
+        except Exception:
+            return False, None
+
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Store a value in Redis with optional TTL."""
         if not self.is_available():

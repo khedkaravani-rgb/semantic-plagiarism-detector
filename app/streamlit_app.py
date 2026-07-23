@@ -546,6 +546,16 @@ with st.sidebar:
             st.success("✅ Settings reset to defaults!")
             st.rerun()
 
+        st.markdown("")
+        if st.button("🔍 Ping Redis", key="ping_redis_button", use_container_width=True):
+            from src.utils.redis_cache import get_cache
+            connected, latency = get_cache().ping()
+            if connected:
+                st.success(f"✅ Connected ({latency} ms ping)")
+            else:
+                st.error("🚨 Disconnected")
+            st.rerun()
+
         st.markdown("---")
         st.markdown("### 📁 Document Management")
         existing_docs = get_all_documents()

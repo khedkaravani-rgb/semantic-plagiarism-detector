@@ -48,7 +48,7 @@ pylint>=3.0.0
 redis>=5.0.0                    # Redis client for session state and caching
 
 # ── Web Scraping ───────────────────────────────────────────────────────────────
-beautifulsoup4>=4.12.0          # HTML parsing for URL content extraction
+beautifulsoup4>=4.15.0          # HTML parsing for URL content extraction
 requests>=2.31.0                # HTTP library for fetching web content
 # ── REST API & LMS Integration ────────────────────────────────────────────────
 fastapi>=0.109.0                # REST API framework for LMS integrations

@@ -4,7 +4,7 @@ tests/i18n/test_translator.py
 Unit tests for the i18n translation engine.
 """
 
-from src.i18n.translator import get_text, _SUPPORTED_LANGUAGES
+from src.i18n.translator import get_text
 
 
 def test_translation_english():

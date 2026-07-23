@@ -24,15 +24,14 @@ from typing import Any
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
+    back_to_top_html,
     empty_state_html,
     get_colors,
     get_theme_name,
     inject_css,
     set_theme,
-    back_to_top_html,
 )
 from src.core.ai_detector import detect_documents_ai_probability
-from src.i18n.translator import get_text, _SUPPORTED_LANGUAGES
 from src.core.config import DEFAULT_THRESHOLDS, severity_key
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
@@ -59,6 +58,7 @@ from src.core.similarity import (
 )
 from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
+from src.i18n.translator import _SUPPORTED_LANGUAGES, get_text
 
 
 class OCRFileBatchError(Exception):
@@ -86,17 +86,18 @@ from src.db.auth import (
     get_2fa_status,
     get_all_users,
     get_tour_completed,
+    get_user_preferences,
     get_user_role,
     init_db,
     set_tour_completed,
-    verify_user,
-    get_user_preferences,       
     update_user_preferences,
+    verify_user,
 )
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
     get_most_plagiarized_documents,
 )
+from src.utils.excel_export import export_similarity_matrix_to_excel
 from src.utils.pdf_report import highlight_pdf_matches  # noqa: E402
 from src.utils.redis_cache import (
     cache_session_state,
@@ -115,10 +116,6 @@ from src.visualization.analytics import (  # noqa: E402
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 from src.visualization.network_graph import plot_similarity_network
-from src.utils.excel_export import export_similarity_matrix_to_excel
-
-
-from src.utils.excel_export import export_similarity_matrix_to_excel
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -255,8 +252,10 @@ if not st.session_state.get("authenticated", False):
                         cache_session_state(SESSION_ID, "role", role)
                         cache_session_state(SESSION_ID, "last_interaction", time.time())
                         prefs = get_user_preferences(username)
-                        st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
-                        st.session_state.theme = prefs.get('theme', 'Light')
+                        st.session_state.threshold = prefs.get(
+                            "threshold", DEFAULT_THRESHOLDS.plagiarism
+                        )
+                        st.session_state.theme = prefs.get("theme", "Light")
                         set_theme(st.session_state.theme)
 
                         # Clear pending state
@@ -286,8 +285,10 @@ if not st.session_state.get("authenticated", False):
         if login_submitted:
             username = username.strip().lower()
             prefs = get_user_preferences(username)
-            st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
-            st.session_state.theme = prefs.get('theme', 'Light')
+            st.session_state.threshold = prefs.get(
+                "threshold", DEFAULT_THRESHOLDS.plagiarism
+            )
+            st.session_state.theme = prefs.get("theme", "Light")
             set_theme(st.session_state.theme)
 
             if not username or not password:
@@ -327,9 +328,6 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-
-
-                st.error("Invalid username or password.")
 
                             st.success(f"Welcome back, {role.capitalize()}!")
                             st.rerun()
@@ -416,19 +414,24 @@ with theme_col:
         st.rerun()
 
 
-
 # ── Sidebar (ROLE RESTRICTED Settings & i18n) ─────────────────────────────────
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
+
+
 def save_preferences_callback():
     if "username" in st.session_state:
         prefs = {
-            "threshold": st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism),
-            "theme": st.session_state.get("theme_selector", "Light")
+            "threshold": st.session_state.get(
+                "threshold_slider", DEFAULT_THRESHOLDS.plagiarism
+            ),
+            "theme": st.session_state.get("theme_selector", "Light"),
         }
     update_user_preferences(st.session_state.username, prefs)
+
+
 with st.sidebar:
     # 🌐 i18n Language Selector (#144)
     selected_lang_name = st.selectbox(
@@ -455,17 +458,10 @@ with st.sidebar:
 
     if user_role == "admin":
         threshold = st.slider(
-
             get_text("threshold", lang=lang_code),
-            0.50,
-            0.99,
-            value=PLAGIARISM_THRESHOLD,
-
-            "Plagiarism Threshold",
             min_value=0.0,
-            max_value=DEFAULT_THRESHOLDS.medium,
+            max_value=1.0,
             value=DEFAULT_THRESHOLDS.plagiarism,
-
             step=0.01,
             help=(
                 "Controls which pairs are flagged. Severity remains Medium "
@@ -800,17 +796,15 @@ if (
 
         tour = Tour(steps=tour_steps)
         tour.start()
-
+        set_tour_completed(username, True)
+        st.session_state.show_tour = False
+        st.success("✅ Onboarding tour completed!")
+        st.rerun()
 
 # ── Main Header (Dynamic i18n Translation) ───────────────────────────────────
 st.title(get_text("title", lang=lang_code))
 st.markdown(get_text("subtitle", lang=lang_code))
 st.divider()
-
-        set_tour_completed(username, True)
-        st.session_state.show_tour = False
-        st.success("✅ Onboarding tour completed!")
-        st.rerun()
 
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
@@ -954,7 +948,6 @@ else:
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
 
-
             faiss_index = (
                 load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
             )
@@ -970,11 +963,6 @@ else:
     # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
     uploaded_files = st.file_uploader(
         get_text("upload_title", lang=lang_code),
-        type=["pdf", "docx", "txt"],
-
-    # 1. LOCAL FILE UPLOADER
-    uploaded_files = st.file_uploader(
-        "📂 Upload Assignments",
         type=["pdf", "docx", "txt", "zip", "csv"],
         accept_multiple_files=True,
         key="file_uploader",
@@ -1128,13 +1116,19 @@ else:
                         "Connecting to Google Drive API & downloading files..."
                     ):
                         try:
-                            downloaded_dict, downloaded_names = bulk_download_drive_folder(
-                                folder_url_or_id=drive_folder_input,
-                                api_key=drive_api_key.strip() if drive_api_key else None,
+                            downloaded_dict, downloaded_names = (
+                                bulk_download_drive_folder(
+                                    folder_url_or_id=drive_folder_input,
+                                    api_key=(
+                                        drive_api_key.strip() if drive_api_key else None
+                                    ),
+                                )
                             )
 
                             if downloaded_dict:
-                                st.session_state.drive_files_dict.update(downloaded_dict)
+                                st.session_state.drive_files_dict.update(
+                                    downloaded_dict
+                                )
                                 st.success(
                                     f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
                                 )
@@ -1365,15 +1359,12 @@ else:
         file_bytes_dict: dict[str, bytes],
         ocr_language: str,
         ocr_dpi: int,
-
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-
         existing_index=None,
         existing_registry=None,
         url_text: str = None,
         url_filename: str = None,
-
     ):
         raw_texts = {}
         failed_files = []
@@ -1461,7 +1452,6 @@ else:
             ai_probabilities,
         )
 
-
     with st.spinner("🧠 Processing files and building embeddings…"):
         analysis_results = run_pipeline(
             file_bytes_dict,
@@ -1482,7 +1472,6 @@ else:
             st.warning(f"Failed files: {', '.join(exc.failed_files)}")
         st.stop()
 
-
     (
         raw_texts,
         chunked_docs,
@@ -1496,8 +1485,6 @@ else:
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
     flags = flag_plagiarism(active_sim_df, threshold=threshold)
-
-
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
 
@@ -1514,7 +1501,6 @@ else:
 
     if "sent_alerts" not in st.session_state:
         st.session_state.sent_alerts = set()
-
 
     for flag in flags:
         alert_key = (flag["doc_a"], flag["doc_b"])
@@ -1541,21 +1527,14 @@ else:
     col1.metric(get_text("metric_docs", lang=lang_code), n_docs)
     col2.metric(get_text("metric_pairs", lang=lang_code), total_pairs)
     col3.metric(get_text("metric_flagged", lang=lang_code), n_flagged)
-    col4.metric(get_text("metric_faiss", lang=lang_code), faiss_index.ntotal if faiss_index is not None else 0)
+    col4.metric(
+        get_text("metric_faiss", lang=lang_code),
+        faiss_index.ntotal if faiss_index is not None else 0,
+    )
     col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
 
-
     # ── Application Tabs (Translated i18n Headers) ────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
-        [
-            get_text("tab_warnings", lang=lang_code),
-            get_text("tab_faiss", lang=lang_code),
-            get_text("tab_matrix", lang=lang_code),
-            get_text("tab_heatmap", lang=lang_code),
-            get_text("tab_drill", lang=lang_code),
-            get_text("tab_users", lang=lang_code),
-
     # ── Tabs ──────────────────────────────────────────────────────────────────────
     (
         tab_warnings,
@@ -1567,14 +1546,13 @@ else:
         tab_users,
     ) = st.tabs(
         [
-            "⚠️ Plagiarism Warnings",
-            "⚡ FAISS Chunk Search",
-            "📋 Similarity Matrix",
-            "🗺️ Heatmap",
-            "🔬 Pair Drill-Down",
-            "📊 Analytics",
-            "👥 User Management",
-
+            get_text("tab_warnings", lang=lang_code),
+            get_text("tab_faiss", lang=lang_code),
+            get_text("tab_matrix", lang=lang_code),
+            get_text("tab_heatmap", lang=lang_code),
+            get_text("tab_drill", lang=lang_code),
+            get_text("tab_analytics", lang=lang_code),
+            get_text("tab_users", lang=lang_code),
         ]
     )
 
@@ -1781,7 +1759,6 @@ else:
                     index=0,
                     key="db",
                 )
-
 
         score = float(active_sim_df.loc[doc_a, doc_b])
         st.markdown(f"**Overall Similarity:** `{score:.1%}`")

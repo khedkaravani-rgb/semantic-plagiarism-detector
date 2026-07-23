@@ -410,6 +410,22 @@ def save_preferences_callback():
     update_user_preferences(st.session_state.username, prefs)
 
 with st.sidebar:
+    st.markdown(f"👤 Logged in as **{st.session_state.get('username', '')}**")
+    if st.button("🚪 Log Out", use_container_width=True):
+        import logging
+        from datetime import datetime, timezone
+        logger = logging.getLogger(__name__)
+        username = st.session_state.get("username", "unknown")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        logger.info("User '%s' logged out at %s", username, timestamp)
+        
+        for key in ["authenticated", "username", "role"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        clear_session(SESSION_ID)
+        st.rerun()
+    st.markdown("---")
+
     selected_lang_name = st.selectbox(
         "🌐 Language / Idioma",
         options=list(_SUPPORTED_LANGUAGES.values()),

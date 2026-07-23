@@ -933,12 +933,99 @@ else:
             faiss_index = None
             registry = []
 
-    if "analysis_results" not in st.session_state:
+    def load_analysis_results_from_db():
+        import numpy as np
+        import pandas as pd
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        from src.db.corpus_db import get_all_documents, get_chunk_registry
+
+        docs = get_all_documents()
+        if not docs:
+            return None
+
+        raw_texts = {}
+        chunked_docs = {}
+        embeddings = {}
+
+        try:
+            from src.db.corpus_db import _connect
+
+            with _connect() as conn:
+                rows = conn.execute(
+                    "SELECT filename, chunk_index, chunk_text, embedding FROM chunks ORDER BY filename, chunk_index"
+                ).fetchall()
+
+            for fname, chunk_idx, text, emb_blob in rows:
+                if fname not in raw_texts:
+                    raw_texts[fname] = ""
+                    chunked_docs[fname] = []
+                    embeddings[fname] = []
+
+                raw_texts[fname] += text + " "
+                chunked_docs[fname].append(text)
+
+                emb = np.frombuffer(emb_blob, dtype=np.float32)
+                embeddings[fname].append(emb)
+
+            # Convert lists to numpy arrays
+            for fname in embeddings:
+                embeddings[fname] = np.vstack(embeddings[fname])
+
+            sim_df = document_similarity_matrix(embeddings)
+
+            names = list(embeddings.keys())
+            n = len(names)
+            chunk_mat = np.zeros((n, n))
+            for i, na in enumerate(names):
+                for j, nb in enumerate(names):
+                    if i == j:
+                        chunk_mat[i, j] = 1.0
+                    elif j > i:
+                        ea, eb = embeddings[na], embeddings[nb]
+                        score = (
+                            float(np.max(cosine_similarity(ea, eb)))
+                            if ea.size and eb.size
+                            else 0.0
+                        )
+                        chunk_mat[i, j] = score
+                        chunk_mat[j, i] = score
+            chunk_sim_df = pd.DataFrame(chunk_mat, index=names, columns=names)
+
+            f_index = load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
+            f_registry = get_chunk_registry()
+
+            # Default AI probabilities for loaded documents to 0.0
+            ai_probs = {
+                fname: {"overall": 0.0, "max": 0.0, "chunk_scores": []}
+                for fname in names
+            }
+
+            return (
+                raw_texts,
+                chunked_docs,
+                embeddings,
+                sim_df,
+                chunk_sim_df,
+                f_index,
+                f_registry,
+                ai_probs,
+            )
+        except Exception as err:
+            print(f"Error rebuilding analysis results from DB: {err}")
+            return None
+
+    if (
+        "analysis_results" not in st.session_state
+        or st.session_state.analysis_results is None
+    ):
         st.session_state.analysis_results = None
 
         cached_results = get_analysis_results(f"{SESSION_ID}:current")
         if cached_results is not None:
             st.session_state.analysis_results = cached_results
+        else:
+            st.session_state.analysis_results = load_analysis_results_from_db()
 
     # Initialize analysis_file_signature in session state
     if "analysis_file_signature" not in st.session_state:
@@ -1233,17 +1320,15 @@ else:
             st.success(
                 f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents"
             )
+            from src.db.corpus_db import get_all_documents
+
             # Skip to analysis section with existing index
-            file_bytes_dict = {}
-            raw_texts = {}
-            chunked_docs = {}
-            embeddings = {}
-            sim_df = None
-            chunk_sim_df = None
-            # We'll need to handle this case differently for the analysis
-            st.warning(
-                "⚠️ Full similarity matrix requires re-uploading files. FAISS search is available with existing index."
-            )
+            file_bytes_dict = {doc["filename"]: b"" for doc in get_all_documents()}
+            raw_texts = st.session_state.analysis_results[0]
+            chunked_docs = st.session_state.analysis_results[1]
+            embeddings = st.session_state.analysis_results[2]
+            sim_df = st.session_state.analysis_results[3]
+            chunk_sim_df = st.session_state.analysis_results[4]
     if st.session_state.drive_files_dict:
         file_bytes_dict.update(st.session_state.drive_files_dict)
 

@@ -153,6 +153,20 @@ streamlit run app/streamlit_app.py
 
 The app opens at **http://localhost:8501**.
 
+### 5. Pre-populated Seed Data (Optional for Contributors)
+
+To quickly test dashboard UI/CSS changes or verify logic without manually registering accounts or uploading documents, you can load pre-populated seed data:
+
+```bash
+# Load seed databases (users.db, corpus.db) and FAISS index (corpus.index)
+make load-seed   # Or: python scripts/manage_seed.py load
+```
+
+After loading the seed data, launch the Streamlit dashboard and log in with the pre-configured contributor accounts:
+* **Admin**: `admin` / `admin123`
+* **Teacher**: `teacher` / `teacher123`
+
+
 ### Docker Deployment (recommended for quick setup)
 
 One-command local deployment using Docker and Docker Compose. This builds a slim

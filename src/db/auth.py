@@ -39,10 +39,13 @@ def _connect() -> sqlite3.Connection:
 
 def _hash_password(password: str) -> str:
     """Return a bcrypt hash for the given password."""
-    return bcrypt.hashpw(
-        password.encode(),
-        bcrypt.gensalt(10),
-    ).decode()
+    try:
+        return bcrypt.hashpw(
+            password.encode(),
+            bcrypt.gensalt()
+        ).decode()
+    finally:
+        password = "REDACTED"
 
 
 def _validate_username(username: str) -> str:
@@ -53,10 +56,13 @@ def _validate_username(username: str) -> str:
 
 
 def _validate_password(password: str) -> str:
-    password = str(password)
-    if len(password.strip()) < 5:
-        raise ValueError("Password must be at least 5 characters long.")
-    return password
+    try:
+        password = str(password)
+        if len(password.strip()) < 5:
+            raise ValueError("Password must be at least 5 characters long.")
+        return password
+    finally:
+        password = "REDACTED"
 
 
 def _validate_role(role: str) -> str:
@@ -91,19 +97,22 @@ def init_db() -> None:
 
 def verify_user(username: str, password: str) -> bool:
     """Return True if username exists and password matches the stored hash."""
-    username = _validate_username(username)
-    password = _validate_password(password)
+    try:
+        username = _validate_username(username)
+        password = _validate_password(password)
 
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT password FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT password FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
 
-    if not row:
-        return False
+        if not row:
+            return False
 
-    return bcrypt.checkpw(password.encode(), row[0].encode())
+        return bcrypt.checkpw(password.encode(), row[0].encode())
+    finally:
+        password = "REDACTED"
 
 
 # Alias for compatibility
@@ -125,20 +134,23 @@ def get_user_role(username: str) -> str | None:
 
 def add_user(username: str, password: str, role: str = "teacher") -> None:
     """Insert a user and preserve SQLite duplicate-user semantics."""
-    username = _validate_username(username)
-    password = _validate_password(password)
-    role = _validate_role(role)
+    try:
+        username = _validate_username(username)
+        password = _validate_password(password)
+        role = _validate_role(role)
 
-    hashed = _hash_password(password)
+        hashed = _hash_password(password)
 
-    with _connect() as conn:
-        # The UNIQUE constraint is the source of truth. Existing callers and
-        # tests rely on sqlite3.IntegrityError for duplicate usernames.
-        conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, hashed, role),
-        )
-        conn.commit()
+        with _connect() as conn:
+            # The UNIQUE constraint is the source of truth. Existing callers and
+            # tests rely on sqlite3.IntegrityError for duplicate usernames.
+            conn.execute(
+                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                (username, hashed, role),
+            )
+            conn.commit()
+    finally:
+        password = "REDACTED"
 
 
 def get_all_users() -> list:
@@ -172,24 +184,27 @@ def delete_user(username: str) -> None:
 
 def update_password(username: str, new_password: str) -> None:
     """Update a user's password with a new bcrypt hash."""
-    username = _validate_username(username)
-    new_password = _validate_password(new_password)
+    try:
+        username = _validate_username(username)
+        new_password = _validate_password(new_password)
 
-    with _connect() as conn:
-        # Optimized check using COUNT(1) for #185
-        cursor = conn.execute(
-            "SELECT COUNT(1) FROM users WHERE username = ?",
-            (username,),
-        )
-        if cursor.fetchone()[0] == 0:
-            raise ValueError("User not found.")
+        with _connect() as conn:
+            # Optimized check using COUNT(1) for #185
+            cursor = conn.execute(
+                "SELECT COUNT(1) FROM users WHERE username = ?",
+                (username,),
+            )
+            if cursor.fetchone()[0] == 0:
+                raise ValueError("User not found.")
 
-        hashed = _hash_password(new_password)
-        conn.execute(
-            "UPDATE users SET password = ? WHERE username = ?",
-            (hashed, username),
-        )
-        conn.commit()
+            hashed = _hash_password(new_password)
+            conn.execute(
+                "UPDATE users SET password = ? WHERE username = ?",
+                (hashed, username),
+            )
+            conn.commit()
+    finally:
+        new_password = "REDACTED"
 
 
 def get_tour_completed(username: str) -> bool:

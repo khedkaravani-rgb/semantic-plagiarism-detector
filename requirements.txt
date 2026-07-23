@@ -61,5 +61,5 @@ black>=24.1.0                   # Opinionated Python code formatter
 isort>=5.13.0                   # Import sorting library
 
 # ── Google Integration ─────────────────────────────────────────────────────────
-google-api-python-client>=2.100.0
+google-api-python-client>=2.198.0
 google-auth>=2.22.0

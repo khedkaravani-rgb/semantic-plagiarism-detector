@@ -557,7 +557,17 @@ with st.sidebar:
                     st.text(f"📄 {doc['filename']}")
                 with col2:
                     if st.button("🗑️", key=f"del_{doc['filename']}"):
-                        delete_document(doc["filename"])
+                        st.session_state._pending_delete = doc["filename"]
+                        st.rerun()
+
+            pending = st.session_state.get("_pending_delete")
+            if pending:
+                st.markdown("---")
+                st.warning(f"Are you sure you want to delete **{pending}**?")
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    if st.button("Yes, delete", type="primary", key="confirm_delete_doc"):
+                        delete_document(pending)
                         embeddings_matrix = get_all_embeddings()
                         if embeddings_matrix.size > 0:
                             new_index = build_index_from_matrix(embeddings_matrix)
@@ -565,6 +575,11 @@ with st.sidebar:
                         else:
                             if os.path.exists(_INDEX_PATH):
                                 os.remove(_INDEX_PATH)
+                        del st.session_state._pending_delete
+                        st.rerun()
+                with cancel_col:
+                    if st.button("Cancel", key="cancel_delete_doc"):
+                        del st.session_state._pending_delete
                         st.rerun()
 
         st.markdown('<div class="clear-all-container">', unsafe_allow_html=True)

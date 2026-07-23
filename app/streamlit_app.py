@@ -1657,28 +1657,7 @@ else:
 
     # ══ TAB 4: HEATMAP ════════════════════════════════════════════════════════
     with tab_heatmap:
-
         st.subheader(get_text("tab_heatmap", lang=lang_code))
-        heatmap_fig = plot_similarity_heatmap(
-            active_sim_df,
-            title="Document Semantic Similarity",
-            threshold=threshold,
-            theme_colors=get_colors(),
-        )
-        st.pyplot(heatmap_fig, use_container_width=True)
-
-    # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
-    with tab_drill:
-        st.subheader(get_text("tab_drill", lang=lang_code))
-        c1, c2 = st.columns(2)
-        with c1:
-            doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
-        with c2:
-            doc_b = st.selectbox(
-                "Document B", [d for d in doc_names if d != doc_a], index=0, key="db"
-            )
-
-        st.subheader("🗺️ Similarity Heatmap")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
 
@@ -1744,10 +1723,12 @@ else:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
 
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
+            st.stop()
         elif len(active_sim_df) < 2:
             from src.errors import UI_NEED_MIN_DOCUMENTS
 
             st.warning(UI_NEED_MIN_DOCUMENTS)
+            st.stop()
         else:
             c1, c2 = st.columns(2)
             with c1:

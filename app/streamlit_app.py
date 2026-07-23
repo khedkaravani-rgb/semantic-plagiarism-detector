@@ -79,7 +79,6 @@ from src.db import (
     get_all_documents,
     get_all_embeddings,
     get_chunk_registry,
-    get_documents_by_class,
     get_unique_class_sections,
     init_corpus_db,
 )
@@ -1390,8 +1389,10 @@ else:
         else:
             def _highlight(val: Any) -> str:
                 tier = severity_key(float(val))
-                if tier == "high": return "background-color:#ff4b4b;color:white;font-weight:bold;"
-                if tier == "medium": return "background-color:#ffa500;color:white;font-weight:bold;"
+                if tier == "high": 
+                    return "background-color:#ff4b4b;color:white;font-weight:bold;"
+                if tier == "medium": 
+                    return "background-color:#ffa500;color:white;font-weight:bold;"
                 return ""
 
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)

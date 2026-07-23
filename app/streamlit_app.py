@@ -1848,7 +1848,9 @@ else:
                 threshold=threshold,
             )
             for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
-                with st.expander(f"#{rank} — Similarity: {sim:.1%}"):
+                is_exact = "".join(ca.split()) == "".join(cb.split())
+                badge = " :green[[Exact Match]]" if is_exact else ""
+                with st.expander(f"#{rank} — Similarity: {sim:.1%}{badge}"):
                     st.write(f"**{doc_a}:** {ca}")
                     st.write(f"**{doc_b}:** {cb}")
 

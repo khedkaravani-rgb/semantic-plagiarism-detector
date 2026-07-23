@@ -155,6 +155,24 @@ def _reset_page() -> None:
     st.session_state.warning_page = 1
 
 
+def _has_exact_match(doc_a: str, doc_b: str) -> bool:
+    """Check if two documents share at least one exact matching chunk (ignoring whitespace)."""
+    if (
+        "analysis_results" not in st.session_state
+        or st.session_state.analysis_results is None
+    ):
+        return False
+    chunked_docs = st.session_state.analysis_results[1]
+    chunks_a = chunked_docs.get(doc_a, [])
+    chunks_b = chunked_docs.get(doc_b, [])
+
+    # Normalize chunks by removing all whitespace
+    norm_a = {"".join(c.split()) for c in chunks_a if c.strip()}
+    norm_b = {"".join(c.split()) for c in chunks_b if c.strip()}
+
+    return not norm_a.isdisjoint(norm_b)
+
+
 def render_warning_controls(
     flags: Sequence[Mapping[str, Any]],
     *,
@@ -376,7 +394,14 @@ def render_warning_controls(
         with st.container(border=True):
             c1, c2 = st.columns([3, 1])
             with c1:
-                st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
+                if _has_exact_match(flag["doc_a"], flag["doc_b"]):
+                    exact_badge = " <span style='background-color: #E8F5E9; color: #2E7D32; border: 1px solid #2E7D32; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-left: 8px; vertical-align: middle;'>Exact Match</span>"
+                    st.markdown(
+                        f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**{exact_badge}",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
                 st.progress(
                     min(1.0, max(0.0, float(flag["similarity"]))),
                     text=f"Similarity: {flag['similarity'] * 100:.1f}%",

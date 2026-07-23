@@ -3,10 +3,10 @@
 import os
 from typing import Dict
 
+import numpy as np
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
-import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 from src.core.document_parser import extract_text
@@ -17,7 +17,10 @@ from src.core.similarity import (
     find_most_similar_chunks,
 )
 from src.core.text_chunking import chunk_document
-from src.db.corpus_db import _connect, init_corpus_db
+from src.db.corpus_db import _connect, init_corpus_db, clear_all_data
+from src.db.auth import get_user_role
+from src.utils.redis_cache import get_cache
+import logging
 
 # ── API Initialization ────────────────────────────────────────────────────────
 
@@ -62,6 +65,7 @@ def verify_bearer_token(
 
 # ── Database Helpers ───────────────────────────────────────────────────────────
 
+
 def get_corpus_documents_with_embeddings() -> Dict[str, Dict]:
     """Load all stored corpus documents, text chunks, and chunk embeddings from SQLite."""
     init_corpus_db()
@@ -92,6 +96,7 @@ def get_corpus_documents_with_embeddings() -> Dict[str, Dict]:
 
 # ── API Endpoints ──────────────────────────────────────────────────────────────
 
+
 @app.get("/health", tags=["Health"])
 def health_check():
     """Healthcheck endpoint for readiness and liveness probes."""
@@ -104,7 +109,9 @@ def health_check():
 
 @app.post("/api/v1/scan", tags=["Plagiarism Detection"])
 async def scan_document(
-    file: UploadFile = File(..., description="Document file to scan (.pdf, .docx, .txt)"),
+    file: UploadFile = File(
+        ..., description="Document file to scan (.pdf, .docx, .txt)"
+    ),
     threshold: float = Query(
         default=PLAGIARISM_THRESHOLD,
         ge=0.0,
@@ -243,3 +250,61 @@ async def scan_document(
         "matched_documents_count": len(matched_documents),
         "matched_documents": matched_documents,
     }
+
+
+# ── System Administration ──────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
+INDEX_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "corpus.index")
+)
+
+
+@app.post("/api/v1/clear", tags=["System Administration"])
+async def clear_all_documents(
+    username: str = Query(..., description="Username of the administrator executing the operation"),
+    _token: str = Depends(verify_bearer_token),
+):
+    """
+    Remove all documents, text chunks, and plagiarism incidents from the SQLite database,
+    delete the FAISS index file, and clear the Redis cache. Restricted to administrators.
+    """
+    # 1. Verify administrator permissions
+    role = get_user_role(username)
+    if role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only administrators are authorized to clear all documents.",
+        )
+
+    try:
+        # 2. Clear SQLite database (documents, chunks, incidents)
+        clear_all_data()
+
+        # 3. Clear/reset the FAISS index file on disk
+        if os.path.exists(INDEX_PATH):
+            try:
+                os.remove(INDEX_PATH)
+            except OSError as e:
+                logger.error(f"Failed to remove FAISS index file: {e}")
+
+        # 4. Invalidate Redis cache
+        try:
+            cache = get_cache()
+            if cache.is_available():
+                cache.delete("faiss:index:corpus_index")
+                cache.clear_pattern("analysis:*")
+        except Exception as e:
+            logger.error(f"Failed to clear Redis cache: {e}")
+
+        return {
+            "status": "success",
+            "message": "All documents, chunks, and plagiarism incidents have been cleared, and the FAISS index reset successfully."
+        }
+
+    except Exception as e:
+        logger.error(f"Error during bulk clearing: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while clearing the corpus: {str(e)}"
+        )

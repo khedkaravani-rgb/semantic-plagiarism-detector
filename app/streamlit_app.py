@@ -24,15 +24,14 @@ from typing import Any
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
+    back_to_top_html,
     empty_state_html,
     get_colors,
     get_theme_name,
     inject_css,
     set_theme,
-    back_to_top_html,
 )
 from src.core.ai_detector import detect_documents_ai_probability
-from src.i18n.translator import get_text, _SUPPORTED_LANGUAGES
 from src.core.config import DEFAULT_THRESHOLDS, severity_key
 from src.core.document_parser import (
     DEFAULT_OCR_DPI,
@@ -59,6 +58,7 @@ from src.core.similarity import (
 )
 from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
+from src.i18n.translator import _SUPPORTED_LANGUAGES, get_text
 
 
 class OCRFileBatchError(Exception):
@@ -86,17 +86,18 @@ from src.db.auth import (
     get_2fa_status,
     get_all_users,
     get_tour_completed,
+    get_user_preferences,
     get_user_role,
     init_db,
     set_tour_completed,
-    verify_user,
-    get_user_preferences,       
     update_user_preferences,
+    verify_user,
 )
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
     get_most_plagiarized_documents,
 )
+from src.utils.excel_export import export_similarity_matrix_to_excel
 from src.utils.pdf_report import highlight_pdf_matches  # noqa: E402
 from src.utils.redis_cache import (
     cache_session_state,
@@ -115,10 +116,6 @@ from src.visualization.analytics import (  # noqa: E402
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 from src.visualization.network_graph import plot_similarity_network
-from src.utils.excel_export import export_similarity_matrix_to_excel
-
-
-from src.utils.excel_export import export_similarity_matrix_to_excel
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -255,8 +252,10 @@ if not st.session_state.get("authenticated", False):
                         cache_session_state(SESSION_ID, "role", role)
                         cache_session_state(SESSION_ID, "last_interaction", time.time())
                         prefs = get_user_preferences(username)
-                        st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
-                        st.session_state.theme = prefs.get('theme', 'Light')
+                        st.session_state.threshold = prefs.get(
+                            "threshold", DEFAULT_THRESHOLDS.plagiarism
+                        )
+                        st.session_state.theme = prefs.get("theme", "Light")
                         set_theme(st.session_state.theme)
 
                         # Clear pending state
@@ -286,8 +285,10 @@ if not st.session_state.get("authenticated", False):
         if login_submitted:
             username = username.strip().lower()
             prefs = get_user_preferences(username)
-            st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
-            st.session_state.theme = prefs.get('theme', 'Light')
+            st.session_state.threshold = prefs.get(
+                "threshold", DEFAULT_THRESHOLDS.plagiarism
+            )
+            st.session_state.theme = prefs.get("theme", "Light")
             set_theme(st.session_state.theme)
 
             if not username or not password:
@@ -327,9 +328,6 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-
-
-                st.error("Invalid username or password.")
 
                             st.success(f"Welcome back, {role.capitalize()}!")
                             st.rerun()
@@ -416,19 +414,24 @@ with theme_col:
         st.rerun()
 
 
-
 # ── Sidebar (ROLE RESTRICTED Settings & i18n) ─────────────────────────────────
 # ── Sidebar (ROLE RESTRICTED Settings) ────────────────────────────────────────
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
+
+
 def save_preferences_callback():
     if "username" in st.session_state:
         prefs = {
-            "threshold": st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism),
-            "theme": st.session_state.get("theme_selector", "Light")
+            "threshold": st.session_state.get(
+                "threshold_slider", DEFAULT_THRESHOLDS.plagiarism
+            ),
+            "theme": st.session_state.get("theme_selector", "Light"),
         }
     update_user_preferences(st.session_state.username, prefs)
+
+
 with st.sidebar:
     # 🌐 i18n Language Selector (#144)
     selected_lang_name = st.selectbox(
@@ -455,17 +458,10 @@ with st.sidebar:
 
     if user_role == "admin":
         threshold = st.slider(
-
             get_text("threshold", lang=lang_code),
-            0.50,
-            0.99,
-            value=PLAGIARISM_THRESHOLD,
-
-            "Plagiarism Threshold",
             min_value=0.0,
-            max_value=DEFAULT_THRESHOLDS.medium,
+            max_value=1.0,
             value=DEFAULT_THRESHOLDS.plagiarism,
-
             step=0.01,
             help=(
                 "Controls which pairs are flagged. Severity remains Medium "
@@ -559,7 +555,11 @@ with st.sidebar:
             )
 
         st.markdown("")
-        if st.button("🔄 Reset to Factory Defaults", key="reset_defaults_button", use_container_width=True):
+        if st.button(
+            "🔄 Reset to Factory Defaults",
+            key="reset_defaults_button",
+            use_container_width=True,
+        ):
             keys_to_reset = [
                 "theme_selector",
                 "threshold_slider",
@@ -796,17 +796,15 @@ if (
 
         tour = Tour(steps=tour_steps)
         tour.start()
-
+        set_tour_completed(username, True)
+        st.session_state.show_tour = False
+        st.success("✅ Onboarding tour completed!")
+        st.rerun()
 
 # ── Main Header (Dynamic i18n Translation) ───────────────────────────────────
 st.title(get_text("title", lang=lang_code))
 st.markdown(get_text("subtitle", lang=lang_code))
 st.divider()
-
-        set_tour_completed(username, True)
-        st.session_state.show_tour = False
-        st.success("✅ Onboarding tour completed!")
-        st.rerun()
 
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
@@ -935,12 +933,99 @@ else:
             faiss_index = None
             registry = []
 
-    if "analysis_results" not in st.session_state:
+    def load_analysis_results_from_db():
+        import numpy as np
+        import pandas as pd
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        from src.db.corpus_db import get_all_documents, get_chunk_registry
+
+        docs = get_all_documents()
+        if not docs:
+            return None
+
+        raw_texts = {}
+        chunked_docs = {}
+        embeddings = {}
+
+        try:
+            from src.db.corpus_db import _connect
+
+            with _connect() as conn:
+                rows = conn.execute(
+                    "SELECT filename, chunk_index, chunk_text, embedding FROM chunks ORDER BY filename, chunk_index"
+                ).fetchall()
+
+            for fname, chunk_idx, text, emb_blob in rows:
+                if fname not in raw_texts:
+                    raw_texts[fname] = ""
+                    chunked_docs[fname] = []
+                    embeddings[fname] = []
+
+                raw_texts[fname] += text + " "
+                chunked_docs[fname].append(text)
+
+                emb = np.frombuffer(emb_blob, dtype=np.float32)
+                embeddings[fname].append(emb)
+
+            # Convert lists to numpy arrays
+            for fname in embeddings:
+                embeddings[fname] = np.vstack(embeddings[fname])
+
+            sim_df = document_similarity_matrix(embeddings)
+
+            names = list(embeddings.keys())
+            n = len(names)
+            chunk_mat = np.zeros((n, n))
+            for i, na in enumerate(names):
+                for j, nb in enumerate(names):
+                    if i == j:
+                        chunk_mat[i, j] = 1.0
+                    elif j > i:
+                        ea, eb = embeddings[na], embeddings[nb]
+                        score = (
+                            float(np.max(cosine_similarity(ea, eb)))
+                            if ea.size and eb.size
+                            else 0.0
+                        )
+                        chunk_mat[i, j] = score
+                        chunk_mat[j, i] = score
+            chunk_sim_df = pd.DataFrame(chunk_mat, index=names, columns=names)
+
+            f_index = load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
+            f_registry = get_chunk_registry()
+
+            # Default AI probabilities for loaded documents to 0.0
+            ai_probs = {
+                fname: {"overall": 0.0, "max": 0.0, "chunk_scores": []}
+                for fname in names
+            }
+
+            return (
+                raw_texts,
+                chunked_docs,
+                embeddings,
+                sim_df,
+                chunk_sim_df,
+                f_index,
+                f_registry,
+                ai_probs,
+            )
+        except Exception as err:
+            print(f"Error rebuilding analysis results from DB: {err}")
+            return None
+
+    if (
+        "analysis_results" not in st.session_state
+        or st.session_state.analysis_results is None
+    ):
         st.session_state.analysis_results = None
 
         cached_results = get_analysis_results(f"{SESSION_ID}:current")
         if cached_results is not None:
             st.session_state.analysis_results = cached_results
+        else:
+            st.session_state.analysis_results = load_analysis_results_from_db()
 
     # Initialize analysis_file_signature in session state
     if "analysis_file_signature" not in st.session_state:
@@ -949,7 +1034,6 @@ else:
         cached_signature = get_session_state(SESSION_ID, "analysis_file_signature")
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
-
 
             faiss_index = (
                 load_index(_INDEX_PATH) if os.path.exists(_INDEX_PATH) else None
@@ -966,12 +1050,7 @@ else:
     # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
     uploaded_files = st.file_uploader(
         get_text("upload_title", lang=lang_code),
-        type=["pdf", "docx", "txt"],
-
-    # 1. LOCAL FILE UPLOADER
-    uploaded_files = st.file_uploader(
-        "📂 Upload Assignments",
-        type=["pdf", "docx", "txt", "zip"],
+        type=["pdf", "docx", "txt", "zip", "csv"],
         accept_multiple_files=True,
         key="file_uploader",
     )
@@ -989,6 +1068,92 @@ else:
             # Increment upload counter for each file
             for _ in uploaded_files:
                 increment_upload_count(username)
+
+    # CSV Column Configuration Section
+    csv_configs = {}
+    csv_files = (
+        [f for f in uploaded_files if f.name.lower().endswith(".csv")]
+        if uploaded_files
+        else []
+    )
+    if csv_files:
+        st.markdown("### 📊 CSV Ingestion Settings")
+        for f in csv_files:
+            try:
+                csv_bytes = f.getvalue()
+                df = pd.read_csv(_io.BytesIO(csv_bytes))
+                columns = list(df.columns)
+                if not columns:
+                    st.error(f"⚠️ CSV file '{f.name}' has no columns.")
+                    continue
+                # Auto-detect default text column
+                default_text_idx = 0
+                for i, col in enumerate(columns):
+                    if any(
+                        term in col.lower()
+                        for term in [
+                            "response",
+                            "answer",
+                            "text",
+                            "essay",
+                            "content",
+                            "document",
+                            "submission",
+                        ]
+                    ):
+                        default_text_idx = i
+                        break
+                # Auto-detect default name/id column
+                default_name_idx = None
+                for i, col in enumerate(columns):
+                    if (
+                        any(
+                            term in col.lower()
+                            for term in [
+                                "name",
+                                "student",
+                                "email",
+                                "id",
+                                "user",
+                                "username",
+                                "timestamp",
+                            ]
+                        )
+                        and i != default_text_idx
+                    ):
+                        default_name_idx = i
+                        break
+                st.markdown(f"**Column Mapping for `{f.name}`**")
+                col_text, col_name = st.columns(2)
+                with col_text:
+                    text_col = st.selectbox(
+                        f"Text Column ({f.name})",
+                        options=columns,
+                        index=default_text_idx,
+                        key=f"csv_text_col_{f.name}",
+                        help="Select the column containing the essay/text responses to analyze.",
+                    )
+                with col_name:
+                    name_options = ["None (Use Row Number)"] + columns
+                    default_name_idx_adjusted = (
+                        (default_name_idx + 1) if default_name_idx is not None else 0
+                    )
+                    name_col = st.selectbox(
+                        f"Student Name/ID Column ({f.name})",
+                        options=name_options,
+                        index=default_name_idx_adjusted,
+                        key=f"csv_name_col_{f.name}",
+                        help="Select the column containing student names or IDs (optional).",
+                    )
+                csv_configs[f.name] = {
+                    "df": df,
+                    "text_col": text_col,
+                    "name_col": (
+                        None if name_col == "None (Use Row Number)" else name_col
+                    ),
+                }
+            except Exception as e:
+                st.error(f"❌ Failed to parse CSV file '{f.name}': {str(e)}")
 
     st.markdown("### 🔗 Or Paste URL")
     url_input = st.text_input(
@@ -1038,13 +1203,19 @@ else:
                         "Connecting to Google Drive API & downloading files..."
                     ):
                         try:
-                            downloaded_dict, downloaded_names = bulk_download_drive_folder(
-                                folder_url_or_id=drive_folder_input,
-                                api_key=drive_api_key.strip() if drive_api_key else None,
+                            downloaded_dict, downloaded_names = (
+                                bulk_download_drive_folder(
+                                    folder_url_or_id=drive_folder_input,
+                                    api_key=(
+                                        drive_api_key.strip() if drive_api_key else None
+                                    ),
+                                )
                             )
 
                             if downloaded_dict:
-                                st.session_state.drive_files_dict.update(downloaded_dict)
+                                st.session_state.drive_files_dict.update(
+                                    downloaded_dict
+                                )
                                 st.success(
                                     f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
                                 )
@@ -1078,6 +1249,29 @@ else:
                     st.error(
                         f"⚠️ Failed to process ZIP archive '{f.name}': Unknown error occurred."
                     )
+            elif f.name.lower().endswith(".csv"):
+                if f.name in csv_configs:
+                    config = csv_configs[f.name]
+                    df = config["df"]
+                    text_col = config["text_col"]
+                    name_col = config["name_col"]
+                    for idx, row in df.iterrows():
+                        text_val = row[text_col]
+                        if pd.isna(text_val) or not str(text_val).strip():
+                            continue
+                        if name_col and not pd.isna(row[name_col]):
+                            student_name = str(row[name_col]).strip()
+                        else:
+                            student_name = f"Row {idx + 1}"
+                        clean_student_name = student_name.replace("/", "_").replace(
+                            "\\", "_"
+                        )
+                        virtual_filename = (
+                            f"{clean_student_name} ({f.name} - Row {idx + 1}).txt"
+                        )
+                        file_bytes_dict[virtual_filename] = str(text_val).encode(
+                            "utf-8"
+                        )
             else:
                 file_bytes_dict[f.name] = f.read()
             f.seek(0)
@@ -1126,17 +1320,15 @@ else:
             st.success(
                 f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents"
             )
+            from src.db.corpus_db import get_all_documents
+
             # Skip to analysis section with existing index
-            file_bytes_dict = {}
-            raw_texts = {}
-            chunked_docs = {}
-            embeddings = {}
-            sim_df = None
-            chunk_sim_df = None
-            # We'll need to handle this case differently for the analysis
-            st.warning(
-                "⚠️ Full similarity matrix requires re-uploading files. FAISS search is available with existing index."
-            )
+            file_bytes_dict = {doc["filename"]: b"" for doc in get_all_documents()}
+            raw_texts = st.session_state.analysis_results[0]
+            chunked_docs = st.session_state.analysis_results[1]
+            embeddings = st.session_state.analysis_results[2]
+            sim_df = st.session_state.analysis_results[3]
+            chunk_sim_df = st.session_state.analysis_results[4]
     if st.session_state.drive_files_dict:
         file_bytes_dict.update(st.session_state.drive_files_dict)
 
@@ -1172,31 +1364,54 @@ else:
 
     metadata_dict = {}
     for filename in file_bytes_dict.keys():
-        base_name = os.path.splitext(filename)[0]
-        guessed_name = base_name.replace("_", " ").replace("-", " ").title()
+        # Check if this filename is a virtual CSV document
+        is_csv_doc = False
+        csv_filename_matched = None
+        for csv_name in csv_configs.keys():
+            if f"({csv_name} - Row " in filename:
+                is_csv_doc = True
+                csv_filename_matched = csv_name
+                break
 
-        with st.expander(f"📄 {filename}", expanded=False):
-            student_name = st.text_input(
-                f"Student Name for {filename}",
-                value=guessed_name,
-                key=f"student_{filename}",
-            )
-            class_section = st.text_input(
-                f"Class/Section for {filename}",
-                value=batch_class,
-                key=f"class_{filename}",
-            )
-            assignment_title = st.text_input(
-                f"Assignment Title for {filename}",
-                value=batch_assignment,
-                key=f"assignment_{filename}",
-            )
-
+        if is_csv_doc:
+            base_name = os.path.splitext(filename)[0]
+            marker = f"({csv_filename_matched} - Row "
+            marker_idx = base_name.find(marker)
+            if marker_idx != -1:
+                student_name = base_name[:marker_idx].strip()
+            else:
+                student_name = base_name
             metadata_dict[filename] = {
-                "student_name": student_name.strip(),
-                "class_section": class_section.strip(),
-                "assignment_title": assignment_title.strip(),
+                "student_name": student_name,
+                "class_section": batch_class.strip(),
+                "assignment_title": batch_assignment.strip(),
             }
+        else:
+            base_name = os.path.splitext(filename)[0]
+            guessed_name = base_name.replace("_", " ").replace("-", " ").title()
+
+            with st.expander(f"📄 {filename}", expanded=False):
+                student_name = st.text_input(
+                    f"Student Name for {filename}",
+                    value=guessed_name,
+                    key=f"student_{filename}",
+                )
+                class_section = st.text_input(
+                    f"Class/Section for {filename}",
+                    value=batch_class,
+                    key=f"class_{filename}",
+                )
+                assignment_title = st.text_input(
+                    f"Assignment Title for {filename}",
+                    value=batch_assignment,
+                    key=f"assignment_{filename}",
+                )
+
+                metadata_dict[filename] = {
+                    "student_name": student_name.strip(),
+                    "class_section": class_section.strip(),
+                    "assignment_title": assignment_title.strip(),
+                }
 
     # Add metadata for URL input if provided
     if url_filename:
@@ -1229,15 +1444,12 @@ else:
         file_bytes_dict: dict[str, bytes],
         ocr_language: str,
         ocr_dpi: int,
-
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-
         existing_index=None,
         existing_registry=None,
         url_text: str = None,
         url_filename: str = None,
-
     ):
         raw_texts = {}
         failed_files = []
@@ -1325,7 +1537,6 @@ else:
             ai_probabilities,
         )
 
-
     with st.spinner("🧠 Processing files and building embeddings…"):
         analysis_results = run_pipeline(
             file_bytes_dict,
@@ -1346,7 +1557,6 @@ else:
             st.warning(f"Failed files: {', '.join(exc.failed_files)}")
         st.stop()
 
-
     (
         raw_texts,
         chunked_docs,
@@ -1360,8 +1570,6 @@ else:
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
     flags = flag_plagiarism(active_sim_df, threshold=threshold)
-
-
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
 
@@ -1378,7 +1586,6 @@ else:
 
     if "sent_alerts" not in st.session_state:
         st.session_state.sent_alerts = set()
-
 
     for flag in flags:
         alert_key = (flag["doc_a"], flag["doc_b"])
@@ -1405,21 +1612,14 @@ else:
     col1.metric(get_text("metric_docs", lang=lang_code), n_docs)
     col2.metric(get_text("metric_pairs", lang=lang_code), total_pairs)
     col3.metric(get_text("metric_flagged", lang=lang_code), n_flagged)
-    col4.metric(get_text("metric_faiss", lang=lang_code), faiss_index.ntotal if faiss_index is not None else 0)
+    col4.metric(
+        get_text("metric_faiss", lang=lang_code),
+        faiss_index.ntotal if faiss_index is not None else 0,
+    )
     col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
 
-
     # ── Application Tabs (Translated i18n Headers) ────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
-        [
-            get_text("tab_warnings", lang=lang_code),
-            get_text("tab_faiss", lang=lang_code),
-            get_text("tab_matrix", lang=lang_code),
-            get_text("tab_heatmap", lang=lang_code),
-            get_text("tab_drill", lang=lang_code),
-            get_text("tab_users", lang=lang_code),
-
     # ── Tabs ──────────────────────────────────────────────────────────────────────
     (
         tab_warnings,
@@ -1431,14 +1631,13 @@ else:
         tab_users,
     ) = st.tabs(
         [
-            "⚠️ Plagiarism Warnings",
-            "⚡ FAISS Chunk Search",
-            "📋 Similarity Matrix",
-            "🗺️ Heatmap",
-            "🔬 Pair Drill-Down",
-            "📊 Analytics",
-            "👥 User Management",
-
+            get_text("tab_warnings", lang=lang_code),
+            get_text("tab_faiss", lang=lang_code),
+            get_text("tab_matrix", lang=lang_code),
+            get_text("tab_heatmap", lang=lang_code),
+            get_text("tab_drill", lang=lang_code),
+            get_text("tab_analytics", lang=lang_code),
+            get_text("tab_users", lang=lang_code),
         ]
     )
 
@@ -1543,28 +1742,7 @@ else:
 
     # ══ TAB 4: HEATMAP ════════════════════════════════════════════════════════
     with tab_heatmap:
-
         st.subheader(get_text("tab_heatmap", lang=lang_code))
-        heatmap_fig = plot_similarity_heatmap(
-            active_sim_df,
-            title="Document Semantic Similarity",
-            threshold=threshold,
-            theme_colors=get_colors(),
-        )
-        st.pyplot(heatmap_fig, use_container_width=True)
-
-    # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
-    with tab_drill:
-        st.subheader(get_text("tab_drill", lang=lang_code))
-        c1, c2 = st.columns(2)
-        with c1:
-            doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
-        with c2:
-            doc_b = st.selectbox(
-                "Document B", [d for d in doc_names if d != doc_a], index=0, key="db"
-            )
-
-        st.subheader("🗺️ Similarity Heatmap")
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
 
@@ -1630,10 +1808,12 @@ else:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
 
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
+            st.stop()
         elif len(active_sim_df) < 2:
             from src.errors import UI_NEED_MIN_DOCUMENTS
 
             st.warning(UI_NEED_MIN_DOCUMENTS)
+            st.stop()
         else:
             c1, c2 = st.columns(2)
             with c1:
@@ -1645,7 +1825,6 @@ else:
                     index=0,
                     key="db",
                 )
-
 
         score = float(active_sim_df.loc[doc_a, doc_b])
         st.markdown(f"**Overall Similarity:** `{score:.1%}`")
@@ -1669,7 +1848,9 @@ else:
                 threshold=threshold,
             )
             for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
-                with st.expander(f"#{rank} — Similarity: {sim:.1%}"):
+                is_exact = "".join(ca.split()) == "".join(cb.split())
+                badge = " :green[[Exact Match]]" if is_exact else ""
+                with st.expander(f"#{rank} — Similarity: {sim:.1%}{badge}"):
                     st.write(f"**{doc_a}:** {ca}")
                     st.write(f"**{doc_b}:** {cb}")
 

@@ -344,6 +344,34 @@ if not st.session_state.get("authenticated", False):
 # Active user role
 user_role = st.session_state.get("role", "user")
 
+# Sync threshold from URL query parameters (bi-directional)
+if "threshold" in st.query_params:
+    q_val_raw = st.query_params["threshold"]
+    if st.session_state.get("last_seen_threshold_query") != q_val_raw:
+        try:
+            q_threshold = float(q_val_raw)
+            if 0.0 <= q_threshold <= 1.0:
+                st.session_state.threshold_slider = q_threshold
+                st.session_state.threshold = q_threshold
+                st.session_state.last_seen_threshold_query = q_val_raw
+        except ValueError:
+            pass
+elif "threshold_slider" not in st.session_state:
+    st.session_state.threshold_slider = st.session_state.get(
+        "threshold", DEFAULT_THRESHOLDS.plagiarism
+    )
+
+
+# Resolve fallback configuration variables (ensuring all roles have access to these settings)
+threshold = st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism)
+faiss_top_k = st.session_state.get("faiss_top_k_slider", 5)
+use_chunk_matrix = st.session_state.get("chunk_matrix_checkbox", False)
+chunk_size = st.session_state.get("chunk_size_slider", 500)
+chunk_overlap = st.session_state.get("chunk_overlap_slider", 50)
+ignore_phrases = st.session_state.get("ignore_phrases_textarea", "")
+ocr_language = st.session_state.get("ocr_language_selector", DEFAULT_OCR_LANGUAGE)
+ocr_dpi = st.session_state.get("ocr_dpi_slider", DEFAULT_OCR_DPI)
+
 
 @st.dialog("⚠️ Confirm Bulk Clear")
 def clear_all_dialog():
@@ -471,6 +499,8 @@ with st.sidebar:
             key="threshold_slider",
             on_change=save_preferences_callback,
         )
+        st.query_params["threshold"] = f"{threshold:.2f}"
+        st.session_state.last_seen_threshold_query = f"{threshold:.2f}"
         selected_class = st.selectbox(
             "Filter by Class Section",
             options=unique_classes,
@@ -575,6 +605,8 @@ with st.sidebar:
             for key in keys_to_reset:
                 if key in st.session_state:
                     del st.session_state[key]
+            if "threshold" in st.query_params:
+                del st.query_params["threshold"]
             set_theme("Light")
             st.success("Settings reset to defaults!")
             st.rerun()

@@ -139,7 +139,7 @@ st.set_page_config(
     page_title="Semantic Plagiarism Detector",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 st.markdown(back_to_top_html(), unsafe_allow_html=True)
 inject_css()

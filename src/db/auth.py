@@ -55,10 +55,13 @@ def _validate_username(username: str) -> str:
 
 
 def _validate_password(password: str) -> str:
-    password = str(password)
-    if len(password.strip()) < 5:
-        raise ValueError("Password must be at least 5 characters long.")
-    return password
+    try:
+        password = str(password)
+        if len(password.strip()) < 5:
+            raise ValueError("Password must be at least 5 characters long.")
+        return password
+    finally:
+        password = "REDACTED"
 
 
 def _validate_role(role: str) -> str:
@@ -69,6 +72,34 @@ def _validate_role(role: str) -> str:
 
 
 def init_db() -> None:
+
+    """Create users table and seed default admin if not exists."""
+    conn = _connect()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT    UNIQUE NOT NULL,
+                password TEXT    NOT NULL,
+                role     TEXT    NOT NULL DEFAULT 'teacher',
+                tour_completed INTEGER DEFAULT 0
+            )
+        """)
+        conn.commit()
+
+        cursor = conn.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "tour_completed" not in columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN tour_completed INTEGER DEFAULT 0"
+            )
+            conn.commit()
+
+        exists = conn.execute(
+            "SELECT 1 FROM users WHERE username = ?", ("admin",)
+        ).fetchone()
+
     """Create or upgrade users.db and seed the default administrator."""
     with _connect() as conn:
         migrate_auth_database(conn)
@@ -79,6 +110,7 @@ def init_db() -> None:
         ).fetchone()
         exists = bool(row and row[0])
 
+
         if not exists:
             hashed = _hash_password("admin123")
             conn.execute(
@@ -88,13 +120,29 @@ def init_db() -> None:
                 """,
                 ("admin", hashed, "admin"),
             )
+
+
+        conn.commit()
+
             conn.commit()
+
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise sqlite3.Error(
+            f"Failed to initialize authentication database: {e}"
+        ) from e
+    finally:
+        conn.close()
 
 
 def verify_user(username: str, password: str) -> bool:
     """Return True if username exists and password matches the stored hash."""
-    username = _validate_username(username)
-    password = _validate_password(password)
+    try:
+        username = _validate_username(username)
+        password = _validate_password(password)
+    except ValueError:
+        return False
 
     with _connect() as conn:
         row = conn.execute(
@@ -126,15 +174,47 @@ def verify_user(username: str, password: str) -> bool:
 authenticate_user = verify_user
 
 
+
 def get_user_role(username: str) -> str | None:
     """Return the role of a user, or None if not found."""
+
+    conn = _connect()
+    try:
+
     username = _validate_username(username)
 
     with _connect() as conn:
+
         row = conn.execute(
             "SELECT role FROM users WHERE username = ?",
             (username,),
         ).fetchone()
+
+
+        return row[0] if row else None
+
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve user role: {e}") from e
+    finally:
+        conn.close()
+
+
+def add_user(username: str, password: str, role: str = "teacher") -> None:
+    """Insert a new user with a bcrypt-hashed password."""
+
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(10)).decode()
+
+    conn = _connect()
+    try:
+
+    hashed = _hash_password(password)
+    with _connect() as conn:
+
+        conn.execute(
+            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+            (username.lower(), hashed, role),
+        )
+        conn.commit()
 
     return row[0] if row else None
 
@@ -155,28 +235,52 @@ def get_or_create_sso_user(email: str) -> str:
 
 def add_user(username: str, password: str, role: str = "teacher") -> None:
     """Insert a user and preserve SQLite duplicate-user semantics."""
-    username = _validate_username(username)
-    password = _validate_password(password)
-    role = _validate_role(role)
+    try:
+        username = _validate_username(username)
+        password = _validate_password(password)
+        role = _validate_role(role)
 
-    hashed = _hash_password(password)
+        hashed = _hash_password(password)
 
-    with _connect() as conn:
-        # The UNIQUE constraint is the source of truth. Existing callers and
-        # tests rely on sqlite3.IntegrityError for duplicate usernames.
-        conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, hashed, role),
-        )
-        conn.commit()
+        with _connect() as conn:
+            # The UNIQUE constraint is the source of truth. Existing callers and
+            # tests rely on sqlite3.IntegrityError for duplicate usernames.
+            conn.execute(
+                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                (username, hashed, role),
+            )
+            conn.commit()
+    finally:
+        password = "REDACTED"
+
+
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        raise ValueError(f"Username '{username}' already exists.") from e
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise sqlite3.Error(f"Failed to add user: {e}") from e
+
+    finally:
+        conn.close()
 
 
 def get_all_users() -> list:
     """Return all users as a list of dicts (excludes password hashes)."""
-    with _connect() as conn:
+    conn = _connect()
+    try:
         rows = conn.execute(
             "SELECT id, username, role FROM users ORDER BY id"
         ).fetchall()
+
+        return [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve users: {e}") from e
+
+    finally:
+        conn.close()
 
     return [
         {
@@ -188,42 +292,101 @@ def get_all_users() -> list:
     ]
 
 
+
 def delete_user(username: str) -> None:
     """Delete a user by username."""
+
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM users WHERE username = ?",
+            (username.lower(),),
+
     username = _validate_username(username)
 
     with _connect() as conn:
         conn.execute(
             "DELETE FROM users WHERE username = ?",
             (username,),
+
         )
         conn.commit()
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise sqlite3.Error(f"Failed to delete user: {e}") from e
+
+    finally:
+        conn.close()
 
 
 def update_password(username: str, new_password: str) -> None:
     """Update a user's password with a new bcrypt hash."""
-    username = _validate_username(username)
-    new_password = _validate_password(new_password)
 
+
+    hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(10)).decode()
+
+    conn = _connect()
+    try:
+
+    hashed = _hash_password(new_password)
     with _connect() as conn:
-        # Optimized check using COUNT(1) for #185
-        cursor = conn.execute(
-            "SELECT COUNT(1) FROM users WHERE username = ?",
-            (username,),
-        )
-        if cursor.fetchone()[0] == 0:
-            raise ValueError("User not found.")
 
-        hashed = _hash_password(new_password)
         conn.execute(
             "UPDATE users SET password = ? WHERE username = ?",
-            (hashed, username),
+            (hashed, username.lower()),
         )
         conn.commit()
+
+    try:
+        username = _validate_username(username)
+        new_password = _validate_password(new_password)
+
+        with _connect() as conn:
+            # Optimized check using COUNT(1) for #185
+            cursor = conn.execute(
+                "SELECT COUNT(1) FROM users WHERE username = ?",
+                (username,),
+            )
+            if cursor.fetchone()[0] == 0:
+                raise ValueError("User not found.")
+
+            hashed = _hash_password(new_password)
+            conn.execute(
+                "UPDATE users SET password = ? WHERE username = ?",
+                (hashed, username),
+            )
+            conn.commit()
+    finally:
+        new_password = "REDACTED"
+
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise sqlite3.Error(f"Failed to update password: {e}") from e
+
+    finally:
+        conn.close()
 
 
 def get_tour_completed(username: str) -> bool:
     """Return whether a user has completed the onboarding tour."""
+
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT tour_completed FROM users WHERE username = ?",
+            (username.lower(),),
+        ).fetchone()
+
+        return bool(row[0]) if row else False
+
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve tour status: {e}") from e
+
+    finally:
+        conn.close()
+
     username = _validate_username(username)
 
     with _connect() as conn:
@@ -235,11 +398,17 @@ def get_tour_completed(username: str) -> bool:
     return bool(row[0]) if row else False
 
 
+
 def set_tour_completed(username: str, completed: bool = True) -> None:
     """Mark a user as having completed the onboarding tour."""
+
+    conn = _connect()
+    try:
+
     username = _validate_username(username)
 
     with _connect() as conn:
+
         conn.execute(
             "UPDATE users SET tour_completed = ? WHERE username = ?",
             (1 if completed else 0, username),
@@ -267,6 +436,14 @@ def enable_2fa(username: str, secret: str) -> None:
             (secret, username.lower()),
         )
         conn.commit()
+
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise sqlite3.Error(f"Failed to update tour status: {e}") from e
+
+    finally:
+        conn.close()
 
 
 def disable_2fa(username: str) -> None:

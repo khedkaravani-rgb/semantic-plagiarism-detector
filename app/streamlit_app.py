@@ -243,12 +243,12 @@ if not st.session_state.get("authenticated", False):
                         del st.session_state["pending_username"]
                         del st.session_state["pending_role"]
 
-                        st.success(f"Welcome back, {username}!")
+                        st.success(f"✅ Welcome back, {username}!")
                         st.rerun()
                     else:
-                        st.error("Invalid verification code. Please try again.")
+                        st.error("🚨 Invalid verification code. Please try again.")
                 else:
-                    st.error("2FA configuration error. Please contact admin.")
+                    st.error("🚨 2FA configuration error. Please contact admin.")
 
             if cancel_submitted:
                 del st.session_state["pending_2fa"]
@@ -273,16 +273,16 @@ if not st.session_state.get("authenticated", False):
 
             if not username or not password:
                 from src.errors import AUTH_BLANK_CREDENTIALS
-                st.error(AUTH_BLANK_CREDENTIALS)
+                st.error(f"🚨 {AUTH_BLANK_CREDENTIALS}")
             else:
                 is_allowed, error_msg = check_login_rate_limit(username)
                 if not is_allowed:
-                    st.error(error_msg)
+                    st.error(f"🚨 {error_msg}")
                 elif verify_user(username, password):
                     role = get_user_role(username)
                     if role is None:
                         from src.errors import AUTH_ROLE_UNDETERMINED
-                        st.error(AUTH_ROLE_UNDETERMINED)
+                        st.error(f"🚨 {AUTH_ROLE_UNDETERMINED}")
                     else:
                         clear_login_attempts(username)
                         enabled, _ = get_2fa_status(username)
@@ -302,13 +302,13 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-                            st.success(f"Welcome back, {role.capitalize()}!")
+                            st.success(f"✅ Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
                     # Record failed login attempt
                     record_failed_login(username)
                     from src.errors import AUTH_INVALID_CREDENTIALS
-                    st.error(AUTH_INVALID_CREDENTIALS)
+                    st.error(f"🚨 {AUTH_INVALID_CREDENTIALS}")
     st.stop()
 
 # Active user role
@@ -379,7 +379,7 @@ def clear_all_dialog():
             if "analysis_file_signature" in st.session_state:
                 st.session_state.analysis_file_signature = None
 
-            st.success("All documents, chunks, and incidents have been cleared.")
+            st.success("✅ All documents, chunks, and incidents have been cleared.")
             st.rerun()
 
 # ── Top-right Theme Toggle ───────────────────────────────────────────────────
@@ -543,7 +543,7 @@ with st.sidebar:
             if "threshold" in st.query_params:
                 del st.query_params["threshold"]
             set_theme("Light")
-            st.success("Settings reset to defaults!")
+            st.success("✅ Settings reset to defaults!")
             st.rerun()
 
         st.markdown("---")
@@ -655,7 +655,7 @@ if user_role != "admin":
                     if not results:
                         st.success("✅ No significant matches found in the assignment database.")
                     else:
-                        st.success(f"Found **{len(results)}** potentially similar passages.")
+                        st.success(f"✅ Found **{len(results)}** potentially similar passages.")
 
                         doc_id_map = {}
                         anon_counter = 1
@@ -688,7 +688,7 @@ if user_role != "admin":
 
                         st.caption("🔒 Document names are anonymized to protect student privacy.")
             except Exception as e:
-                st.error(f"Error loading index: {str(e)}")
+                st.error(f"🚨 Error loading index: {str(e)}")
 else:
     # ADMIN FULL ACCESS VIEW
     faiss_index = None
@@ -831,7 +831,7 @@ else:
         username = st.session_state.get("username", "anonymous")
         if is_upload_rate_limited(username):
             current_count = get_upload_count(username)
-            st.error(f"Upload rate limit exceeded. Current: {current_count}/100.")
+            st.error(f"🚨 Upload rate limit exceeded. Current: {current_count}/100.")
             uploaded_files = None
         else:
             for _ in uploaded_files:
@@ -951,7 +951,7 @@ else:
             
             if st.button("📥 Import Files from Drive", type="primary", use_container_width=True):
                 if not drive_folder_input.strip():
-                    st.error("Please enter a valid Google Drive folder link or ID.")
+                    st.error("🚨 Please enter a valid Google Drive folder link or ID.")
                 else:
                     with st.spinner("Connecting to Google Drive API & downloading files..."):
                         try:
@@ -975,7 +975,7 @@ else:
                             else:
                                 st.warning("No supported files found in this Drive folder.")
                         except Exception as err:
-                            st.error(f"Failed to import from Google Drive: {str(err)}")
+                            st.error(f"🚨 Failed to import from Google Drive: {str(err)}")
 
     # 3. MERGE LOCAL AND DRIVE FILE BYTES
     file_bytes_dict = {}
@@ -1261,7 +1261,7 @@ else:
                 st.session_state.analysis_results = analysis_results
         except OCRFileBatchError as exc:
             from src.errors import OCR_DEPENDENCIES_MISSING
-            st.error(OCR_DEPENDENCIES_MISSING)
+            st.error(f"🚨 {OCR_DEPENDENCIES_MISSING}")
             if exc.failed_files:
                 st.warning(f"Failed files: {', '.join(exc.failed_files)}")
             st.stop()
@@ -1542,7 +1542,7 @@ else:
                             pdf_display = f"""<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="850px" type="application/pdf"></iframe>"""
                             st.markdown(pdf_display, unsafe_allow_html=True)
                         except Exception as err:
-                            st.error(f"Unable to render PDF preview: {str(err)}")
+                            st.error(f"🚨 Unable to render PDF preview: {str(err)}")
                 else:
                     st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
@@ -1605,10 +1605,10 @@ else:
                         totp = pyotp.TOTP(otp_secret)
                         if totp.verify(disable_code.strip()):
                             disable_2fa(current_user)
-                            st.success("Two-factor authentication has been disabled.")
+                            st.success("✅ Two-factor authentication has been disabled.")
                             st.rerun()
                         else:
-                            st.error("Invalid verification code. 2FA remains enabled.")
+                            st.error("🚨 Invalid verification code. 2FA remains enabled.")
         else:
             st.info("🔒 Two-Factor Authentication (2FA) is currently **disabled** for your account. We highly recommend enabling it.")
             if not st.session_state.get("show_2fa_setup", False):
@@ -1659,7 +1659,7 @@ else:
                                 st.success("🎉 Two-Factor Authentication has been successfully enabled!")
                                 st.rerun()
                             else:
-                                st.error("Invalid verification code.")
+                                st.error("🚨 Invalid verification code.")
                         if cancel_setup:
                             st.session_state.show_2fa_setup = False
                             if "temp_2fa_secret" in st.session_state:

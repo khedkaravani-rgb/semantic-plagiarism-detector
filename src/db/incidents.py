@@ -78,6 +78,30 @@ def init_incident_db(
             ) from exc
 
 
+
+def _validate_incident(flag: Mapping[str, Any]) -> tuple[bool, str]:
+    doc_a = str(flag.get("doc_a", "")).strip()
+    doc_b = str(flag.get("doc_b", "")).strip()
+
+    if not doc_a:
+        return False, "Missing document A."
+
+    if not doc_b:
+        return False, "Missing document B."
+
+    if doc_a == doc_b:
+        return False, "Document identifiers must be different."
+
+    try:
+        similarity = float(flag.get("similarity", 0.0))
+    except (TypeError, ValueError):
+        return False, "Similarity score must be numeric."
+
+    if not 0.0 <= similarity <= 1.0:
+        return False, "Similarity score must be between 0.0 and 1.0."
+
+    return True, ""
+
 def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -92,6 +116,8 @@ def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+
+
 def sync_flagged_incidents(
     flags: Iterable[Mapping[str, Any]],
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -103,6 +129,23 @@ def sync_flagged_incidents(
 
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
+
+        for flag in flags:
+            is_valid, message = _validate_incident(flag)
+
+            if not is_valid:
+                print(f"Skipping invalid incident: {message}")
+                continue
+
+            doc_a = str(flag["doc_a"]).strip()
+            doc_b = str(flag["doc_b"]).strip()
+            first, second = _normalise_pair(doc_a, doc_b)
+            conn.execute(
+                """
+                INSERT INTO plagiarism_incidents (
+                    incident_id, document_a, document_b, similarity_score,
+                    severity_rank, review_status, date_flagged, last_seen
+
 
         try:
             for flag in flags:
@@ -136,6 +179,7 @@ def sync_flagged_incidents(
                         timestamp,
                         timestamp,
                     ),
+
                 )
 
             conn.commit()

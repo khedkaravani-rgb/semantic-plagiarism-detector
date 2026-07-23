@@ -139,6 +139,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+pip install pytest-cov  # Required for coverage reporting
 ```
 
 > **Note:** The first run will download the `paraphrase-multilingual-MiniLM-L12-v2` model (~420 MB).
@@ -152,6 +153,79 @@ streamlit run app/streamlit_app.py
 
 The app opens at **http://localhost:8501**.
 
+### 5. Pre-populated Seed Data (Optional for Contributors)
+
+To quickly test dashboard UI/CSS changes or verify logic without manually registering accounts or uploading documents, you can load pre-populated seed data:
+
+```bash
+# Load seed databases (users.db, corpus.db) and FAISS index (corpus.index)
+make load-seed   # Or: python scripts/manage_seed.py load
+```
+
+After loading the seed data, launch the Streamlit dashboard and log in with the pre-configured contributor accounts:
+* **Admin**: `admin` / `admin123`
+* **Teacher**: `teacher` / `teacher123`
+
+
+### Docker Deployment (recommended for quick setup)
+
+One-command local deployment using Docker and Docker Compose. This builds a slim
+Python 3.11 image with all dependencies and spins up the Streamlit dashboard plus
+an optional Redis cache.
+
+**Prerequisites:**
+- Docker Engine 20.10+
+- Docker Compose v2+
+
+**Start the app:**
+
+```bash
+docker compose up --build
+```
+
+The dashboard is available at **http://localhost:8501**.
+
+**Optional services:**
+- **Redis** is included in `docker-compose.yml` for session caching and rate-limiting.
+  The app runs without Redis and falls back to local in-memory state, so you can
+  comment out the `redis` service if you only need the Streamlit UI.
+
+**Environment variables:**
+
+Customize behavior via a `.env` file in the project root or inline in
+`docker-compose.yml`. Key variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL |
+| `APP_BASE_URL` | `http://localhost:8501` | Base URL used in notifications |
+| `SMTP_SERVER` | `smtp.gmail.com` | SMTP server for daily summary emails |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USERNAME` | | SMTP username |
+| `SMTP_PASSWORD` | | SMTP password |
+| `API_BEARER_TOKEN` | | Bearer token for REST API |
+
+See `.env.example` for the full list.
+
+**Rebuild after dependency changes:**
+
+```bash
+docker compose build --no-cache
+docker compose up
+```
+
+**Stop the app:**
+
+```bash
+docker compose down
+```
+
+To also remove the Redis data volume:
+
+```bash
+docker compose down -v
+```
+
 ### Default credentials
 
 | Username | Password | Role |
@@ -159,6 +233,37 @@ The app opens at **http://localhost:8501**.
 | `admin` | `admin123` | Admin — full access + user management |
 
 Additional users can be created from the **User Management** page (admin only).
+
+---
+
+## ⚓ Pre-commit Hooks
+
+To maintain code quality and styling standards, we use client-side Git hooks managed by `pre-commit`. The hooks execute automatically before every commit to format and check code.
+
+### Installation
+
+1. Install the `pre-commit` utility:
+   ```bash
+   pip install pre-commit
+   ```
+
+2. Install the Git hooks:
+   ```bash
+   pre-commit install
+   ```
+
+After installation, the following checks run automatically on every staged file:
+- **`black`**: Formats Python code.
+- **`isort`**: Sorts import lines.
+- **`ruff`**: Checks for lint warnings and errors.
+- **`pre-commit-hooks`**: Performs basic validation (trailing whitespace, end-of-file fixer, check-yaml, check-added-large-files).
+
+### Run Hooks Manually
+
+You can manually trigger all hooks on all files in the repository at any time:
+```bash
+pre-commit run --all-files
+```
 
 ---
 
@@ -290,6 +395,64 @@ Results are **cached by Streamlit** — re-uploading the same files is instant.
 
 ---
 
+## 🌐 REST API for External LMS Integrations
+
+Expose a secure FastAPI endpoint for Learning Management Systems (Canvas, Moodle, Blackboard) to scan student submissions programmatically.
+
+### Start the REST API Server
+
+```bash
+uvicorn src.api.app:app --reload --port 8000
+```
+
+### Endpoints
+
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/health` | `GET` | None | API health and readiness check |
+| `/api/v1/scan` | `POST` | Bearer Token | Scan a document (`.pdf`, `.docx`, `.txt`) against the indexed corpus |
+
+### Example Request (`curl`)
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/scan?threshold=0.59" \
+  -H "Authorization: Bearer dev-bearer-token" \
+  -F "file=@student_essay.pdf"
+```
+
+### Example Response (`JSON`)
+
+```json
+{
+  "filename": "student_essay.pdf",
+  "word_count": 480,
+  "chunk_count": 5,
+  "plagiarism_flagged": true,
+  "threshold_used": 0.59,
+  "overall_document_similarity": 0.8523,
+  "max_chunk_similarity": 0.9125,
+  "matched_documents_count": 1,
+  "matched_documents": [
+    {
+      "filename": "course_source_material.pdf",
+      "document_similarity_score": 0.8523,
+      "max_chunk_similarity_score": 0.9125,
+      "severity": "🔴 High",
+      "flagged_chunks": [
+        {
+          "uploaded_chunk": "Artificial Intelligence is rapidly reshaping higher education...",
+          "matched_chunk": "AI models are transforming modern academic institutions...",
+          "similarity_score": 0.9125
+        }
+      ]
+    }
+  ]
+}
+```
+
+
+---
+
 ## 📦 Dependencies
 
 | Library | Purpose |
@@ -356,6 +519,53 @@ detected by both, but the semantic model provides much stronger signal separatio
 The TF-IDF baseline relies on exact word overlap — it fails when students paraphrase.
 Sentence Transformers encode **meaning**, catching paraphrases that surface-level
 methods miss entirely.
+
+## Similarity threshold and severity configuration
+
+All plagiarism and severity boundaries are defined in
+`src/core/config.py`.
+
+| Rule | Default |
+|---|---:|
+| Pair is flagged as plagiarism | `>= 0.59` |
+| Medium severity | `>= 0.75` |
+| High severity | `>= 0.90` |
+
+The required ordering is:
+
+```text
+0.0 <= plagiarism <= medium <= high <= 1.0
+```
+
+The administrator slider controls which pairs are flagged. It does not redefine
+the Medium or High severity bands.
+
+Scores outside `[0.0, 1.0]` are clamped for consistent presentation. Invalid
+non-numeric, NaN, or infinite values are rejected.
+
+
+## Versioned SQLite schema migrations
+
+`users.db` and `corpus.db` are upgraded automatically using SQLite
+`PRAGMA user_version`.
+
+Migration definitions live in:
+
+```text
+src/db/migrations/auth.py
+src/db/migrations/corpus.py
+src/db/migrations/common.py
+```
+
+Each upgrade:
+
+1. reads the current schema version,
+2. applies every missing migration in order,
+3. runs inside a rollback-safe savepoint,
+4. updates `PRAGMA user_version` only after all migrations succeed,
+5. preserves existing users, documents, chunks, embeddings, and incidents.
+
+Existing database files should not be deleted during an application upgrade.
 
 ---
 

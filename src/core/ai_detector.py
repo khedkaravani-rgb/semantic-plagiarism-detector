@@ -4,6 +4,9 @@ src/core/ai_detector.py
 AI content detection module using transformer models.
 """
 
+import os
+from typing import Any, Dict, List
+
 import numpy as np
 import torch
 
@@ -16,6 +19,7 @@ _DEFAULT_MODEL = "roberta-base-openai-detector"
 def _get_model_name() -> str:
     """Return the configured AI detection model name."""
     return _DEFAULT_MODEL
+    return os.getenv("AI_DETECTION_MODEL", _DEFAULT_MODEL)
 
 
 def _get_model_and_tokenizer():
@@ -68,6 +72,15 @@ def detect_ai_probability_batch(
     """
 
     # Handle empty input
+                f"[ai_detector] Warning: Could not load transformer model ({err}). Using fallback mode."
+            )
+            _model = "fallback"
+            _tokenizer = "fallback"
+    return _model, _tokenizer
+
+
+def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[float]:
+    """Detects AI generated text probabilities for a batch of strings."""
     if not texts:
         return []
 
@@ -102,6 +115,7 @@ def detect_ai_probability_batch(
     for i in range(0, len(valid_texts), batch_size):
         batch_texts = valid_texts[i : i + batch_size]
         batch_indices = valid_indices[i : i + batch_size]
+    probabilities = []
 
         try:
             # Tokenize batch
@@ -152,6 +166,20 @@ def detect_ai_probability_batch(
             # Keep zero probability for failed batch items
             for index in batch_indices:
                 probabilities[index] = 0.0
+            # Move to GPU if available
+            if torch.cuda.is_available() and hasattr(model, "to"):
+                model = model.to("cuda")
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model(**inputs)
+                logits = outputs.logits
+                probs = torch.softmax(logits, dim=-1)
+                # Class 1 corresponds to Fake/AI
+                ai_probs = probs[:, 1].tolist()
+                probabilities.extend(ai_probs)
+        except Exception:
+            probabilities.extend([0.0] * len(batch_texts))
 
     return probabilities
 
@@ -190,6 +218,8 @@ def detect_document_ai_probability(
         maximum probability, and individual chunk scores.
     """
 
+def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
+    """Calculates AI generated text statistics for a single document's chunks."""
     if not chunks:
         return {
             "overall": 0.0,
@@ -229,6 +259,9 @@ def detect_documents_ai_probability(
         for each document.
     """
 
+    chunked_docs: Dict[str, List[str]]
+) -> Dict[str, Dict[str, Any]]:
+    """Calculates AI generated probabilities across multiple documents."""
     results = {}
 
     for doc_name, chunks in chunked_docs.items():

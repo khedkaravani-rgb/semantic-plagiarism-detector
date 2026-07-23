@@ -153,6 +153,79 @@ streamlit run app/streamlit_app.py
 
 The app opens at **http://localhost:8501**.
 
+### 5. Pre-populated Seed Data (Optional for Contributors)
+
+To quickly test dashboard UI/CSS changes or verify logic without manually registering accounts or uploading documents, you can load pre-populated seed data:
+
+```bash
+# Load seed databases (users.db, corpus.db) and FAISS index (corpus.index)
+make load-seed   # Or: python scripts/manage_seed.py load
+```
+
+After loading the seed data, launch the Streamlit dashboard and log in with the pre-configured contributor accounts:
+* **Admin**: `admin` / `admin123`
+* **Teacher**: `teacher` / `teacher123`
+
+
+### Docker Deployment (recommended for quick setup)
+
+One-command local deployment using Docker and Docker Compose. This builds a slim
+Python 3.11 image with all dependencies and spins up the Streamlit dashboard plus
+an optional Redis cache.
+
+**Prerequisites:**
+- Docker Engine 20.10+
+- Docker Compose v2+
+
+**Start the app:**
+
+```bash
+docker compose up --build
+```
+
+The dashboard is available at **http://localhost:8501**.
+
+**Optional services:**
+- **Redis** is included in `docker-compose.yml` for session caching and rate-limiting.
+  The app runs without Redis and falls back to local in-memory state, so you can
+  comment out the `redis` service if you only need the Streamlit UI.
+
+**Environment variables:**
+
+Customize behavior via a `.env` file in the project root or inline in
+`docker-compose.yml`. Key variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL |
+| `APP_BASE_URL` | `http://localhost:8501` | Base URL used in notifications |
+| `SMTP_SERVER` | `smtp.gmail.com` | SMTP server for daily summary emails |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USERNAME` | | SMTP username |
+| `SMTP_PASSWORD` | | SMTP password |
+| `API_BEARER_TOKEN` | | Bearer token for REST API |
+
+See `.env.example` for the full list.
+
+**Rebuild after dependency changes:**
+
+```bash
+docker compose build --no-cache
+docker compose up
+```
+
+**Stop the app:**
+
+```bash
+docker compose down
+```
+
+To also remove the Redis data volume:
+
+```bash
+docker compose down -v
+```
+
 ### Default credentials
 
 | Username | Password | Role |

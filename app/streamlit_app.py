@@ -90,6 +90,8 @@ from src.db.auth import (
     init_db,
     set_tour_completed,
     verify_user,
+    get_user_preferences,       
+    update_user_preferences,
 )
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
@@ -252,6 +254,10 @@ if not st.session_state.get("authenticated", False):
                         cache_session_state(SESSION_ID, "username", username)
                         cache_session_state(SESSION_ID, "role", role)
                         cache_session_state(SESSION_ID, "last_interaction", time.time())
+                        prefs = get_user_preferences(username)
+                        st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
+                        st.session_state.theme = prefs.get('theme', 'Light')
+                        set_theme(st.session_state.theme)
 
                         # Clear pending state
                         del st.session_state["pending_2fa"]
@@ -279,6 +285,10 @@ if not st.session_state.get("authenticated", False):
 
         if login_submitted:
             username = username.strip().lower()
+            prefs = get_user_preferences(username)
+            st.session_state.threshold = prefs.get('threshold', DEFAULT_THRESHOLDS.plagiarism)
+            st.session_state.theme = prefs.get('theme', 'Light')
+            set_theme(st.session_state.theme)
 
             if not username or not password:
                 from src.errors import AUTH_BLANK_CREDENTIALS
@@ -412,7 +422,13 @@ with theme_col:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
-
+def save_preferences_callback():
+    if "username" in st.session_state:
+        prefs = {
+            "threshold": st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism),
+            "theme": st.session_state.get("theme_selector", "Light")
+        }
+    update_user_preferences(st.session_state.username, prefs)
 with st.sidebar:
     # 🌐 i18n Language Selector (#144)
     selected_lang_name = st.selectbox(
@@ -431,6 +447,7 @@ with st.sidebar:
         index=0 if current_theme == "Light" else 1,
         horizontal=True,
         key="theme_selector",
+        on_change=save_preferences_callback,
     )
     if selected_theme != current_theme:
         set_theme(selected_theme)
@@ -456,6 +473,7 @@ with st.sidebar:
                 f"{DEFAULT_THRESHOLDS.high:.0%}."
             ),
             key="threshold_slider",
+            on_change=save_preferences_callback,
         )
         selected_class = st.selectbox(
             "Filter by Class Section",

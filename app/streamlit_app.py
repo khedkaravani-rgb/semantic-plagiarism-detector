@@ -346,17 +346,21 @@ user_role = st.session_state.get("role", "user")
 
 # Sync threshold from URL query parameters (bi-directional)
 if "threshold" in st.query_params:
-    try:
-        q_threshold = float(st.query_params["threshold"])
-        if 0.0 <= q_threshold <= 1.0:
-            st.session_state.threshold_slider = q_threshold
-            st.session_state.threshold = q_threshold
-    except ValueError:
-        pass
+    q_val_raw = st.query_params["threshold"]
+    if st.session_state.get("last_seen_threshold_query") != q_val_raw:
+        try:
+            q_threshold = float(q_val_raw)
+            if 0.0 <= q_threshold <= 1.0:
+                st.session_state.threshold_slider = q_threshold
+                st.session_state.threshold = q_threshold
+                st.session_state.last_seen_threshold_query = q_val_raw
+        except ValueError:
+            pass
 elif "threshold_slider" not in st.session_state:
     st.session_state.threshold_slider = st.session_state.get(
         "threshold", DEFAULT_THRESHOLDS.plagiarism
     )
+
 
 # Resolve fallback configuration variables (ensuring all roles have access to these settings)
 threshold = st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism)
@@ -496,6 +500,7 @@ with st.sidebar:
             on_change=save_preferences_callback,
         )
         st.query_params["threshold"] = f"{threshold:.2f}"
+        st.session_state.last_seen_threshold_query = f"{threshold:.2f}"
         selected_class = st.selectbox(
             "Filter by Class Section",
             options=unique_classes,

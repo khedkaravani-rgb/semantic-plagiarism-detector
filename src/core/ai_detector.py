@@ -9,6 +9,9 @@ from typing import Any, Dict, List
 
 import numpy as np
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 _model = None
 _tokenizer = None
@@ -18,7 +21,6 @@ _DEFAULT_MODEL = "roberta-base-openai-detector"
 
 def _get_model_name() -> str:
     """Return the configured AI detection model name."""
-    return _DEFAULT_MODEL
     return os.getenv("AI_DETECTION_MODEL", _DEFAULT_MODEL)
 
 
@@ -28,7 +30,7 @@ def _get_model_and_tokenizer():
 
     if _model is None or _tokenizer is None:
         model_name = _get_model_name()
-        print(f"[ai_detector] Loading model: {model_name} …")
+        logger.info(f"[ai_detector] Loading model: {model_name} …")
 
         try:
             from transformers import (
@@ -41,10 +43,10 @@ def _get_model_and_tokenizer():
                 model_name
             )
 
-            print("[ai_detector] Model loaded successfully.")
+            logger.info("[ai_detector] Model loaded successfully.")
 
         except Exception as err:
-            print(
+            logger.warning(
                 "[ai_detector] Warning: Could not load transformer model "
                 f"({err}). Using fallback mode."
             )
@@ -52,30 +54,6 @@ def _get_model_and_tokenizer():
             _model = "fallback"
             _tokenizer = "fallback"
 
-    return _model, _tokenizer
-
-
-def detect_ai_probability_batch(
-    texts: list[str],
-    batch_size: int = 8,
-) -> list[float]:
-    """
-    Detect AI probability for multiple texts in batches.
-
-    Args:
-        texts: List of text strings to analyze.
-        batch_size: Number of texts to process in each batch.
-
-    Returns:
-        List of probability scores between 0.0 and 1.0,
-        corresponding to the input texts.
-    """
-
-    # Handle empty input
-                f"[ai_detector] Warning: Could not load transformer model ({err}). Using fallback mode."
-            )
-            _model = "fallback"
-            _tokenizer = "fallback"
     return _model, _tokenizer
 
 
@@ -115,7 +93,6 @@ def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[f
     for i in range(0, len(valid_texts), batch_size):
         batch_texts = valid_texts[i : i + batch_size]
         batch_indices = valid_indices[i : i + batch_size]
-    probabilities = []
 
         try:
             # Tokenize batch
@@ -158,7 +135,7 @@ def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[f
                 probabilities[index] = float(probability)
 
         except Exception as err:
-            print(
+            logger.warning(
                 f"[ai_detector] Warning: Failed to process batch "
                 f"starting at index {i}: {err}"
             )
@@ -166,20 +143,6 @@ def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[f
             # Keep zero probability for failed batch items
             for index in batch_indices:
                 probabilities[index] = 0.0
-            # Move to GPU if available
-            if torch.cuda.is_available() and hasattr(model, "to"):
-                model = model.to("cuda")
-                inputs = {k: v.to("cuda") for k, v in inputs.items()}
-
-            with torch.no_grad():
-                outputs = model(**inputs)
-                logits = outputs.logits
-                probs = torch.softmax(logits, dim=-1)
-                # Class 1 corresponds to Fake/AI
-                ai_probs = probs[:, 1].tolist()
-                probabilities.extend(ai_probs)
-        except Exception:
-            probabilities.extend([0.0] * len(batch_texts))
 
     return probabilities
 
@@ -203,20 +166,6 @@ def detect_ai_probability(text: str) -> float:
 
     return results[0] if results else 0.0
 
-
-def detect_document_ai_probability(
-    chunks: list[str],
-) -> dict:
-    """
-    Calculate AI-generated text statistics for a single document's chunks.
-
-    Args:
-        chunks: List of text chunks belonging to one document.
-
-    Returns:
-        Dictionary containing overall probability,
-        maximum probability, and individual chunk scores.
-    """
 
 def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
     """Calculates AI generated text statistics for a single document's chunks."""
@@ -245,20 +194,6 @@ def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
 
 
 def detect_documents_ai_probability(
-    chunked_docs: dict[str, list[str]],
-) -> dict[str, dict]:
-    """
-    Calculate AI-generated probabilities across multiple documents.
-
-    Args:
-        chunked_docs: Dictionary mapping document names
-        to their text chunks.
-
-    Returns:
-        Dictionary containing AI detection results
-        for each document.
-    """
-
     chunked_docs: Dict[str, List[str]]
 ) -> Dict[str, Dict[str, Any]]:
     """Calculates AI generated probabilities across multiple documents."""

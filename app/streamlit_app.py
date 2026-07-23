@@ -26,6 +26,10 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     plotly_events = None
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
@@ -121,7 +125,6 @@ from src.visualization.analytics import (  # noqa: E402
     plot_most_plagiarized_documents,
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
-from src.visualization.network_graph import plot_similarity_network
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -334,17 +337,6 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-                st.error("Invalid username or password.")
-                role = st.session_state.get("role", "user")
-                st.success(f"Welcome back, {role.capitalize()}!")
-                st.rerun()
-        else:
-                # Record failed login attempt
-                record_failed_login(username)
-                from src.errors import AUTH_INVALID_CREDENTIALS
-
-                st.error(AUTH_INVALID_CREDENTIALS)
-
                             st.success(f"Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
@@ -417,7 +409,7 @@ def clear_all_dialog():
                 try:
                     os.remove(_INDEX_PATH)
                 except Exception as e:
-                    print(f"Error removing FAISS index: {e}")
+                    logger.error(f"Error removing FAISS index: {e}")
 
             # 3. Invalidate Redis cache
             try:
@@ -428,7 +420,7 @@ def clear_all_dialog():
                     cache.delete("faiss:index:corpus_index")
                     cache.clear_pattern("analysis:*")
             except Exception as e:
-                print(f"Error invalidating cache: {e}")
+                logger.error(f"Error invalidating cache: {e}")
 
             # 4. Invalidate Session State cache
             if "analysis_results" in st.session_state:
@@ -953,7 +945,7 @@ else:
                 f"📂 Loaded FAISS index from Redis cache with {faiss_index.ntotal} vectors"
             )
         except Exception as e:
-            print(f"[Redis] Error loading cached index: {e}, falling back to disk")
+            logger.warning(f"[Redis] Error loading cached index: {e}, falling back to disk")
 
     # If Redis loading failed, load from local disk
     if faiss_index is None:
@@ -1061,7 +1053,7 @@ else:
                 ai_probs,
             )
         except Exception as err:
-            print(f"Error rebuilding analysis results from DB: {err}")
+            logger.error(f"Error rebuilding analysis results from DB: {err}")
             return None
 
     if (
@@ -1099,10 +1091,6 @@ else:
     
 
 
-    # 1. LOCAL FILE UPLOADER
-    uploaded_files = st.file_uploader(
-        "📂 Upload Assignments",
-        type=["pdf", "docx", "txt", "zip"],
     # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
     uploaded_files = st.file_uploader(
         get_text("upload_title", lang=lang_code),
@@ -1862,23 +1850,26 @@ else:
                 title="Interactive Document Plagiarism Network",
             )
 
-            selected_points = plotly_events(
-                    network_fig,
-                    click_event=True,
-                    hover_event=False,
-                    select_event=False,
-                    key="plagiarism_network",
-            )
+            if plotly_events is not None:
+                selected_points = plotly_events(
+                        network_fig,
+                        click_event=True,
+                        hover_event=False,
+                        select_event=False,
+                        key="plagiarism_network",
+                )
 
-            if selected_points:
-               clicked_point = selected_points[0]
+                if selected_points:
+                   clicked_point = selected_points[0]
 
-               point_index = clicked_point.get("pointIndex")
+                   point_index = clicked_point.get("pointIndex")
 
-               if point_index is not None and 0 <= point_index < len(doc_names):
-                    clicked_document_id = doc_names[point_index]
+                   if point_index is not None and 0 <= point_index < len(doc_names):
+                        clicked_document_id = doc_names[point_index]
 
-                    st.session_state.selected_document_id = clicked_document_id
+                        st.session_state.selected_document_id = clicked_document_id
+            else:
+                st.plotly_chart(network_fig, use_container_width=True)
 
                    
             selected_document_id = st.session_state.get(

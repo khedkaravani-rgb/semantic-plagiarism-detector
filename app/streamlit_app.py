@@ -1,14 +1,21 @@
-import asyncio
 import sys
 
-# Silence harmless Windows asyncio Proactor connection lost bugs
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 # ruff: noqa: E402
 
 import base64
 import io as _io
 import os
+
+# Fix DLL load failures on Windows for C extensions like PyMuPDF, tokenizers, etc.
+if hasattr(os, "add_dll_directory"):
+    try:
+        os.add_dll_directory(r"C:\Windows\System32")
+    except Exception:
+        pass
+
+from dotenv import load_dotenv
+load_dotenv()
+
 import time
 
 import numpy as np
@@ -118,7 +125,6 @@ from src.visualization.network_graph import plot_similarity_network
 from src.utils.excel_export import export_similarity_matrix_to_excel
 
 
-from src.utils.excel_export import export_similarity_matrix_to_excel
 
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
@@ -127,6 +133,16 @@ except ImportError:
     from utils.excel_export import export_similarity_matrix_to_excel
     from utils.json_export import export_similarity_matrix_to_json
 
+
+# Page Configuration
+st.set_page_config(
+    page_title="Semantic Plagiarism Detector",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+st.markdown(back_to_top_html(), unsafe_allow_html=True)
+inject_css()
 
 # Initialize corpus database
 init_corpus_db()
@@ -165,28 +181,8 @@ except Exception:
 # Initialize auth database
 init_db()
 
-# Page Configuration
-st.set_page_config(
-    page_title="Semantic Plagiarism Detector",
-    page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-st.markdown(back_to_top_html(), unsafe_allow_html=True)
+# Inject global theme CSS
 inject_css()
-
-init_db()
-
-
-st.markdown(
-    """
-<style>
-    .block-container { padding-top: 2rem; }
-    .stAlert { border-radius: 8px; }
-</style>
-""",
-    unsafe_allow_html=True,
-)
 # ── SESSION TIMEOUT & ROUTE PROTECTION ────────────────────────────────────────
 TIMEOUT_LIMIT = 15 * 60  # 15 minutes in seconds
 
@@ -214,6 +210,35 @@ if last_interaction and st.session_state.get("authenticated", False):
     else:
         st.session_state.last_interaction = time.time()
         cache_session_state(SESSION_ID, "last_interaction", time.time())
+
+# Handle OAuth Callback
+if not st.session_state.get("authenticated", False):
+    if "code" in st.query_params and "state" in st.query_params:
+        code = st.query_params["code"]
+        state = st.query_params["state"]
+        
+        from src.utils.sso import exchange_google_code, exchange_github_code
+        from src.db.auth import get_or_create_sso_user
+        
+        user_info = None
+        if state.startswith("google_"):
+            user_info = exchange_google_code(code)
+        elif state.startswith("github_"):
+            user_info = exchange_github_code(code)
+            
+        if user_info and user_info.get("email"):
+            email = user_info["email"]
+            role = get_or_create_sso_user(email)
+            st.session_state.authenticated = True
+            st.session_state.username = email
+            st.session_state.role = role
+            st.session_state.last_interaction = time.time()
+            
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.error("Failed to authenticate with SSO.")
+            st.query_params.clear()
 
 # Render Login UI if not authenticated
 if not st.session_state.get("authenticated", False):
@@ -278,10 +303,64 @@ if not st.session_state.get("authenticated", False):
                 st.rerun()
         st.stop()
 
-    with st.form("login_form"):
-        username = st.text_input("Username", value="admin")
-        password = st.text_input("Password", type="password", value="admin")
-        login_submitted = st.form_submit_button("Log In", use_container_width=True)
+    # Vertically center the login page
+    st.write("")
+    st.write("")
+    st.write("")
+
+    _, center_col, _ = st.columns([1, 2, 1])
+    
+    with center_col:
+        st.markdown(
+            """
+            <div style="text-align: center; margin-bottom: 2rem; animation: loginSlideIn 0.4s ease-out;">
+                <div class="hero-kicker">Semantic Plagiarism Detector</div>
+                <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">Welcome Back</h1>
+                <p style="color: var(--muted);">Securely sign in to access your portal.</p>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+
+        with st.form("login_form"):
+            username = st.text_input("Username", value="admin")
+            password = st.text_input("Password", type="password", value="admin")
+            
+            # Custom styling for the submit button via CSS
+            st.markdown(
+                """
+                <style>
+                div[data-testid="stForm"] button[kind="primaryFormSubmit"] {
+                    background: var(--accent);
+                    color: white;
+                    border: none;
+                    font-weight: 600;
+                    padding: 0.5rem;
+                }
+                div[data-testid="stForm"] {
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    padding: 2.5rem;
+                    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.18);
+                    animation: loginSlideIn 0.4s ease-out;
+                }
+                </style>
+                """, unsafe_allow_html=True
+            )
+            
+            login_submitted = st.form_submit_button("Log In", use_container_width=True)
+    
+            st.markdown("---")
+            col_google, col_github = st.columns(2)
+            from src.utils.sso import get_google_auth_url, get_github_auth_url
+            
+            google_url, _ = get_google_auth_url()
+            github_url, _ = get_github_auth_url()
+            
+            with col_google:
+                st.link_button("Sign in with Google", google_url, use_container_width=True)
+            with col_github:
+                st.link_button("Sign in with GitHub", github_url, use_container_width=True)
 
         if login_submitted:
             username = username.strip().lower()
@@ -327,10 +406,6 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-
-
-                st.error("Invalid username or password.")
-
                             st.success(f"Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
@@ -457,11 +532,6 @@ with st.sidebar:
         threshold = st.slider(
 
             get_text("threshold", lang=lang_code),
-            0.50,
-            0.99,
-            value=PLAGIARISM_THRESHOLD,
-
-            "Plagiarism Threshold",
             min_value=0.0,
             max_value=DEFAULT_THRESHOLDS.medium,
             value=DEFAULT_THRESHOLDS.plagiarism,
@@ -610,146 +680,7 @@ with st.sidebar:
             clear_all_dialog()
         st.markdown("</div>", unsafe_allow_html=True)
 
-# ── MAIN APPLICATION SECTIONS (ROLE CHECKED) ──────────────────────────────────
 
-if user_role != "admin":
-    # STANDARD USER VIEW: Student Query / Search Panel Only (No admin PDF uploading)
-    st.subheader("🔎 Secure Student Search Portal")
-    st.caption(
-        "Paste a text snippet below to check its similarity against existing indexed assignments."
-    )
-
-    st.info(
-        "🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access. Your queries are anonymized for privacy."
-    )
-
-    query_text = st.text_area(
-        "Paste a text snippet to check against index:",
-        height=150,
-        placeholder="Paste a paragraph here to check for plagiarism...",
-    )
-
-    if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
-        # Load existing index and registry from database
-        from src.core.faiss_index import build_index_from_matrix
-        from src.db.corpus_db import get_all_embeddings, get_chunk_registry
-
-        with st.spinner("Loading index and searching..."):
-            try:
-                registry = get_chunk_registry()
-                embeddings_matrix = get_all_embeddings()
-
-                if embeddings_matrix.shape[0] == 0:
-                    from src.errors import UI_NO_DOCUMENTS_INDEXED
-
-                    st.warning(UI_NO_DOCUMENTS_INDEXED)
-                else:
-                    # Build index from stored embeddings
-                    faiss_index = build_index_from_matrix(
-                        embeddings_matrix, index_type="auto"
-                    )
-
-                    # Embed the query
-                    from src.core.embedding_model import embed_chunks
-
-                    query_vec = embed_chunks([query_text.strip()])[0]
-
-                    # Search with threshold
-                    faiss_threshold = threshold
-                    results = search_similar_chunks(
-                        query_vec,
-                        faiss_index,
-                        registry,
-                        top_k=faiss_top_k,
-                        threshold=faiss_threshold,
-                    )
-
-                    if not results:
-                        st.success(
-                            "✅ No significant matches found in the assignment database."
-                        )
-                    else:
-                        st.success(
-                            f"Found **{len(results)}** potentially similar passages."
-                        )
-
-                        # Anonymize document names
-                        doc_id_map = {}
-                        anon_counter = 1
-
-                        for record, score in results:
-                            if record.doc_name not in doc_id_map:
-                                doc_id_map[record.doc_name] = (
-                                    f"Document-{anon_counter:03d}"
-                                )
-                                anon_counter += 1
-
-                        # Display anonymized results
-                        for rank, (record, score) in enumerate(results, 1):
-                            anon_doc_name = doc_id_map[record.doc_name]
-                            color = "#ff4b4b" if score >= 0.90 else "#ffa500"
-
-                            with st.expander(
-                                f"#{rank} · {anon_doc_name} (chunk #{record.chunk_index+1}) "
-                                f"— {score:.1%}",
-                                expanded=(rank == 1),
-                            ):
-                                cq, cm = st.columns(2)
-                                with cq:
-                                    st.markdown("**Your query:**")
-                                    st.info(query_text.strip())
-                                with cm:
-                                    st.markdown(
-                                        f"**Matching passage in {anon_doc_name}:**"
-                                    )
-                                    st.warning(record.chunk_text)
-
-                                st.markdown(
-                                    f"<div style='text-align:right;'>"
-                                    f"<span style='background:{color};color:white;padding:3px 12px;"
-                                    f"border-radius:10px;font-size:0.85rem;font-weight:700;'>"
-                                    f"Similarity: {score*100:.1f}%</span></div>",
-                                    unsafe_allow_html=True,
-                                )
-
-                        st.caption(
-                            "🔒 Document names are anonymized to protect student privacy."
-                        )
-
-            except Exception as e:
-                from src.errors import UI_INDEX_LOAD_FAILED
-
-                st.error(UI_INDEX_LOAD_FAILED.format(error=str(e)))
-                st.info(
-                    "Please ensure documents have been indexed by an administrator."
-                )
-else:
-    # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
-
-    # Load or initialize FAISS index
-    if os.path.exists(_INDEX_PATH):
-        faiss_index = load_index(_INDEX_PATH)
-        registry = get_chunk_registry()
-        if faiss_index is not None and faiss_index.ntotal != len(registry):
-            all_embs = get_all_embeddings()
-            if len(all_embs) > 0 and len(all_embs) == len(registry):
-                faiss_index = build_index_from_matrix(all_embs)
-                save_index(faiss_index, _INDEX_PATH)
-            elif len(all_embs) == 0:
-                faiss_index = None
-                registry = []
-        if faiss_index is not None:
-            st.info(f"📂 Loaded existing FAISS index with {faiss_index.ntotal} vectors")
-    else:
-        threshold = DEFAULT_THRESHOLDS.plagiarism
-        use_chunk_matrix = False
-        faiss_top_k = 5
-        chunk_size = 500
-        chunk_overlap = 50
-        ocr_language = DEFAULT_OCR_LANGUAGE
-        ocr_dpi = DEFAULT_OCR_DPI
-        ignore_phrases = ""
-        st.info("ℹ️ Settings configuration is restricted to Administrators.")
 
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if (
@@ -803,10 +734,11 @@ st.title(get_text("title", lang=lang_code))
 st.markdown(get_text("subtitle", lang=lang_code))
 st.divider()
 
-        set_tour_completed(username, True)
-        st.session_state.show_tour = False
-        st.success("✅ Onboarding tour completed!")
-        st.rerun()
+if st.button("Finish Tour"):
+    set_tour_completed(username, True)
+    st.session_state.show_tour = False
+    st.success("✅ Onboarding tour completed!")
+    st.rerun()
 
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
@@ -826,6 +758,7 @@ if user_role != "admin":
         "Paste a text snippet to check against index:",
         height=150,
         placeholder="Paste a paragraph here to check for plagiarism...",
+        key="student_query_text",
     )
 
     if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
@@ -962,11 +895,6 @@ else:
         cached_signature = get_session_state(SESSION_ID, "analysis_file_signature")
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
-
-    # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
-    uploaded_files = st.file_uploader(
-        get_text("upload_title", lang=lang_code),
-        type=["pdf", "docx", "txt"],
 
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
@@ -1409,16 +1337,6 @@ else:
     col5.metric("🎯 Threshold", f"{threshold:.0%}")
     st.divider()
 
-
-    # ── Application Tabs (Translated i18n Headers) ────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
-        [
-            get_text("tab_warnings", lang=lang_code),
-            get_text("tab_faiss", lang=lang_code),
-            get_text("tab_matrix", lang=lang_code),
-            get_text("tab_heatmap", lang=lang_code),
-            get_text("tab_drill", lang=lang_code),
-            get_text("tab_users", lang=lang_code),
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
     (

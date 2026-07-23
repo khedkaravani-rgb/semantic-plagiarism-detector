@@ -5,6 +5,8 @@ AI content detection module using transformer models.
 """
 
 import numpy as np
+from typing import List
+import torch
 
 _model = None
 _tokenizer = None

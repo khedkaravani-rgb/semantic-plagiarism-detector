@@ -219,6 +219,21 @@ def inject_css() -> None:
             flex-shrink: 0;
         }}
 
+        /* ── Document row (sidebar) ─────────────────────────────────── */
+
+        .doc-row {{
+            border-radius: 8px;
+            padding: 4px 8px;
+            margin-bottom: 2px;
+            transition: background-color 0.18s ease, box-shadow 0.18s ease;
+            cursor: default;
+        }}
+
+        .doc-row:hover {{
+            background-color: var(--neutral-soft);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }}
+
         /* ── Metric cards ───────────────────────────────────────────── */
 
         div[data-testid="stMetric"] {{
@@ -627,6 +642,14 @@ def inject_css() -> None:
             div[data-testid="stMetricValue"] > div {{
                 font-size: 1.3rem !important;
             }}
+
+            /* Issue #258: when the sidebar is opened on a phone/small
+               tablet, keep it from covering the whole screen so the
+               similarity matrix / heatmap stay legible behind it. */
+            [data-testid="stSidebar"] {{
+                min-width: 85vw !important;
+                max-width: 85vw !important;
+            }}
         }}
     </style>
     """
@@ -821,3 +844,62 @@ def back_to_top_html() -> str:
     })();
     </script>
     """
+
+
+def version_check_widget_html(
+    local_version: str,
+    latest_tag: str,
+    repo_url: str = "https://github.com/Ganesh-403/semantic-plagiarism-detector/releases/latest",
+) -> str:
+    """Return an HTML snippet that renders an update-available notification banner.
+
+    The banner is intentionally lightweight — pure HTML/CSS with no external
+    dependencies — so it renders reliably inside ``st.markdown(...,
+    unsafe_allow_html=True)``.
+
+    Parameters
+    ----------
+    local_version:
+        The version string of the currently running application.
+    latest_tag:
+        The newer tag string returned by the GitHub API (e.g. ``"v1.2.0"``).
+    repo_url:
+        Link target for the "View release" call-to-action.
+
+    Returns
+    -------
+    str
+        A self-contained HTML string ready for ``st.markdown``.
+    """
+    colors = get_colors()
+    warning_color = colors["warning"]
+    warning_soft = colors["warning_soft"]
+    ink = colors["ink"]
+    border = colors["border"]
+
+    return f"""
+<div id="spd-update-banner" style="
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    margin-top: 8px;
+    background: {warning_soft};
+    border: 1px solid {warning_color};
+    border-radius: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    color: {ink};
+">
+    <span style="font-size: 1.1rem;">🔔</span>
+    <span>
+        <strong>Update available:</strong>
+        v{local_version} &rarr; <strong>{latest_tag}</strong>.
+        &nbsp;
+        <a href="{repo_url}" target="_blank" rel="noopener noreferrer"
+           style="color: {warning_color}; font-weight: 600; text-decoration: underline;">
+            View release &rarr;
+        </a>
+    </span>
+</div>
+"""

@@ -8,9 +8,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
-
 from src.db.migrations import migrate_corpus_database
-
 from src.core.config import (
     normalize_score,
     normalize_severity_label,
@@ -78,6 +76,30 @@ def init_incident_db(
             ) from exc
 
 
+
+def _validate_incident(flag: Mapping[str, Any]) -> tuple[bool, str]:
+    doc_a = str(flag.get("doc_a", "")).strip()
+    doc_b = str(flag.get("doc_b", "")).strip()
+
+    if not doc_a:
+        return False, "Missing document A."
+
+    if not doc_b:
+        return False, "Missing document B."
+
+    if doc_a == doc_b:
+        return False, "Document identifiers must be different."
+
+    try:
+        similarity = float(flag.get("similarity", 0.0))
+    except (TypeError, ValueError):
+        return False, "Similarity score must be numeric."
+
+    if not 0.0 <= similarity <= 1.0:
+        return False, "Similarity score must be between 0.0 and 1.0."
+
+    return True, ""
+
 def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -92,6 +114,8 @@ def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+
+
 def sync_flagged_incidents(
     flags: Iterable[Mapping[str, Any]],
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -103,6 +127,23 @@ def sync_flagged_incidents(
 
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
+
+        for flag in flags:
+            is_valid, message = _validate_incident(flag)
+
+            if not is_valid:
+                print(f"Skipping invalid incident: {message}")
+                continue
+
+            doc_a = str(flag["doc_a"]).strip()
+            doc_b = str(flag["doc_b"]).strip()
+            first, second = _normalise_pair(doc_a, doc_b)
+            conn.execute(
+                """
+                INSERT INTO plagiarism_incidents (
+                    incident_id, document_a, document_b, similarity_score,
+                    severity_rank, review_status, date_flagged, last_seen
+
 
         try:
             for flag in flags:
@@ -136,6 +177,7 @@ def sync_flagged_incidents(
                         timestamp,
                         timestamp,
                     ),
+
                 )
 
             conn.commit()
@@ -278,3 +320,22 @@ def get_most_plagiarized_documents(
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+def add_false_positive(doc_a: str, doc_b: str, db_path: str | Path = DEFAULT_DB_PATH) -> None:
+    """Inserts a dismissed pair into the false_positives table."""
+    init_incident_db(db_path) 
+    norm_a, norm_b = _normalise_pair(doc_a, doc_b)
+    
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO false_positives (document_a, document_b) VALUES (?, ?)",
+            (norm_a, norm_b)
+        )
+        conn.commit()
+
+def get_false_positives(db_path: str | Path = DEFAULT_DB_PATH) -> set[tuple[str, str]]:
+    """Returns a set of all normalized dismissed pairs for fast filtering."""
+    init_incident_db(db_path) 
+    
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute("SELECT document_a, document_b FROM false_positives").fetchall()
+        return set((row[0], row[1]) for row in rows)

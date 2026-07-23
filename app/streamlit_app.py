@@ -21,6 +21,11 @@ if _ROOT not in sys.path:
 
 from typing import Any
 
+try:
+    from streamlit_plotly_events import plotly_events
+except ImportError:  # pragma: no cover - optional dependency
+    plotly_events = None
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
@@ -59,7 +64,7 @@ from src.core.similarity import (
 )
 from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
-
+from src.visualization.network_graph import plot_similarity_network
 
 class OCRFileBatchError(Exception):
     """Exception raised when OCR extraction fails on one or more files in a batch."""
@@ -317,18 +322,16 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
-
-
                 st.error("Invalid username or password.")
+                role = st.session_state.get("role", "user")
+                st.success(f"Welcome back, {role.capitalize()}!")
+                st.rerun()
+        else:
+                # Record failed login attempt
+                record_failed_login(username)
+                from src.errors import AUTH_INVALID_CREDENTIALS
 
-                            st.success(f"Welcome back, {role.capitalize()}!")
-                            st.rerun()
-                else:
-                    # Record failed login attempt
-                    record_failed_login(username)
-                    from src.errors import AUTH_INVALID_CREDENTIALS
-
-                    st.error(AUTH_INVALID_CREDENTIALS)
+                st.error(AUTH_INVALID_CREDENTIALS)
 
     st.stop()
 
@@ -438,17 +441,10 @@ with st.sidebar:
 
     if user_role == "admin":
         threshold = st.slider(
-
             get_text("threshold", lang=lang_code),
-            0.50,
-            0.99,
-            value=PLAGIARISM_THRESHOLD,
-
-            "Plagiarism Threshold",
             min_value=0.0,
             max_value=DEFAULT_THRESHOLDS.medium,
             value=DEFAULT_THRESHOLDS.plagiarism,
-
             step=0.01,
             help=(
                 "Controls which pairs are flagged. Severity remains Medium "
@@ -785,10 +781,6 @@ st.title(get_text("title", lang=lang_code))
 st.markdown(get_text("subtitle", lang=lang_code))
 st.divider()
 
-        set_tour_completed(username, True)
-        st.session_state.show_tour = False
-        st.success("✅ Onboarding tour completed!")
-        st.rerun()
 
 
 # ── MAIN APPLICATION SECTIONS ──────────────────────────────────────────────────
@@ -945,10 +937,8 @@ else:
         if cached_signature is not None:
             st.session_state.analysis_file_signature = cached_signature
 
-    # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
-    uploaded_files = st.file_uploader(
-        get_text("upload_title", lang=lang_code),
-        type=["pdf", "docx", "txt"],
+    
+
 
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
@@ -1344,37 +1334,6 @@ else:
     flags = flag_plagiarism(active_sim_df, threshold=threshold)
 
 
-
-    # ── Summary Metrics ───────────────────────────────────────────────────────────
-
-    if len(file_bytes_dict) < 2:
-        st.markdown(
-            empty_state_html(
-                "Waiting for Files",
-                "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
-                "📂",
-            ),
-            unsafe_allow_html=True,
-        )
-        st.stop()
-
-    if "sent_alerts" not in st.session_state:
-        st.session_state.sent_alerts = set()
-
-
-    for flag in flags:
-        alert_key = (flag["doc_a"], flag["doc_b"])
-        if alert_key not in st.session_state.sent_alerts:
-            try:
-                send_plagiarism_alert(
-                    doc_a=flag["doc_a"],
-                    doc_b=flag["doc_b"],
-                    similarity=float(flag["similarity"]),
-                )
-                st.session_state.sent_alerts.add(alert_key)
-            except Exception:
-                pass
-
     # ── Summary Metrics (Translated i18n Labels) ─────────────────────────────────
 
     st.subheader(get_text("analysis_summary", lang=lang_code))
@@ -1392,15 +1351,6 @@ else:
     st.divider()
 
 
-    # ── Application Tabs (Translated i18n Headers) ────────────────────────────
-    tab_warnings, tab_faiss, tab_matrix, tab_heatmap, tab_drill, tab_users = st.tabs(
-        [
-            get_text("tab_warnings", lang=lang_code),
-            get_text("tab_faiss", lang=lang_code),
-            get_text("tab_matrix", lang=lang_code),
-            get_text("tab_heatmap", lang=lang_code),
-            get_text("tab_drill", lang=lang_code),
-            get_text("tab_users", lang=lang_code),
 
     # ── Tabs ──────────────────────────────────────────────────────────────────────
     (
@@ -1424,13 +1374,6 @@ else:
         ]
     )
 
-    # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
-
-    with tab_warnings:
-        st.subheader(get_text("tab_warnings", lang=lang_code))
-        render_warning_controls(
-            flags, threshold=threshold, ai_probabilities=ai_probabilities
-        )
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
@@ -1540,10 +1483,10 @@ else:
         st.subheader(get_text("tab_drill", lang=lang_code))
         c1, c2 = st.columns(2)
         with c1:
-            doc_a = st.selectbox("Document A", doc_names, index=0, key="da")
+            doc_a = st.selectbox("Document A", doc_names, index=0, key="manual_compare_doc_a")
         with c2:
             doc_b = st.selectbox(
-                "Document B", [d for d in doc_names if d != doc_a], index=0, key="db"
+                "Document B", [d for d in doc_names if d != doc_a], index=0, key="manual_compare_doc_b"
             )
 
         st.subheader("🗺️ Similarity Heatmap")
@@ -1595,14 +1538,92 @@ else:
                 title="Interactive Document Plagiarism Network",
             )
 
-            st.plotly_chart(
-                network_fig,
-                use_container_width=True,
-                config={
-                    "displaylogo": False,
-                    "scrollZoom": True,
-                },
+            selected_points = plotly_events(
+                    network_fig,
+                    click_event=True,
+                    hover_event=False,
+                    select_event=False,
+                    key="plagiarism_network",
             )
+
+            if selected_points:
+               clicked_point = selected_points[0]
+
+               point_index = clicked_point.get("pointIndex")
+
+               if point_index is not None and 0 <= point_index < len(doc_names):
+                    clicked_document_id = doc_names[point_index]
+
+                    st.session_state.selected_document_id = clicked_document_id
+
+                   
+            selected_document_id = st.session_state.get(
+                "selected_document_id"
+     )
+
+
+            if selected_document_id:
+                filtered_flags = [
+                    flag
+                    for flag in flags
+                        if (
+                            flag["doc_a"] == selected_document_id
+                            or flag["doc_b"] == selected_document_id
+                        )
+                ]
+            else:
+                filtered_flags=flags
+
+          
+
+
+   # ── Summary Metrics ───────────────────────────────────────────────────────────
+
+    if len(file_bytes_dict) < 2:
+        st.markdown(
+            empty_state_html(
+                "Waiting for Files",
+                "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                "📂",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
+    if "sent_alerts" not in st.session_state:
+        st.session_state.sent_alerts = set()
+
+
+    for flag in filtered_flags:
+        alert_key = (flag["doc_a"], flag["doc_b"])
+        if alert_key not in st.session_state.sent_alerts:
+            try:
+                send_plagiarism_alert(
+                    doc_a=flag["doc_a"],
+                    doc_b=flag["doc_b"],
+                    similarity=float(flag["similarity"]),
+                )
+                st.session_state.sent_alerts.add(alert_key)
+            except Exception:
+                pass
+
+    # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
+
+    with tab_warnings:
+        st.subheader(get_text("tab_warnings", lang=lang_code))
+
+        if selected_document_id:
+            st.info(
+                f"Showing warnings involving: {selected_document_id}"
+            )
+
+        if st.button("Clear Document Filter"):
+            st.session_state.selected_document_id = None
+            st.rerun()
+
+        render_warning_controls(
+            filtered_flags, threshold=threshold, ai_probabilities=ai_probabilities
+        )
 
     # ══ TAB 5: PAIR DRILL-DOWN ══════════════════════════════════════════════════
     with tab_drill:
@@ -1694,6 +1715,10 @@ else:
                         st.error(f"Unable to render PDF preview: {str(err)}")
             else:
                 st.info("PDF Preview is only available for uploaded `.pdf` files.")
+
+
+
+
 
     # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
     with tab_analytics:

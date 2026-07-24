@@ -12,7 +12,7 @@ from typing import BinaryIO, Dict, List, Union
 import docx
 import pdfplumber
 from langdetect import LangDetectException, detect
-
+from striprtf.striprtf import rtf_to_text
 from src.core.translator import translate_text
 
 # OCR dependencies are imported lazily so TXT/DOCX and normal text PDFs still
@@ -556,13 +556,31 @@ def extract_text_from_txt(file: PDFInput) -> str:
     return text.strip()
 
 
+def extract_text_from_rtf(file: PDFInput) -> str:
+    """Extract plain text from an RTF file using striprtf."""
+    text = ""
+    try:
+        if isinstance(file, str):
+            with open(file, "r", encoding="utf-8", errors="ignore") as handle:
+                content = handle.read()
+        elif isinstance(file, bytes):
+            content = file.decode("utf-8", errors="ignore")
+        elif isinstance(file, io.BytesIO):
+            content = file.read().decode("utf-8", errors="ignore")
+        else:
+            data = file.read()
+            content = (
+                data.decode("utf-8", errors="ignore")
+                if isinstance(data, bytes)
+                else data
+            )
+        text = rtf_to_text(content)
+    except Exception as exc:
+        print(f"[document_parser] Error reading RTF: {exc}")
+    return text.strip()
+
+
 # --- Markdown (.md) support -------------------------------------------------
-#
-# Markdown files are plain text, so we reuse the TXT reading logic to get the
-# raw source, then strip common Markdown syntax so only the readable content
-# reaches the semantic-analysis / embedding pipeline. Fenced code blocks are
-# kept (with the fence markers removed) since code can still be relevant
-# content for plagiarism comparison; only the surrounding syntax is removed.
 
 _MD_FENCE = re.compile(r"^\s*(```|~~~)")
 _MD_ATX_HEADER = re.compile(r"^\s{0,3}#{1,6}\s+")
@@ -616,7 +634,6 @@ def strip_markdown_syntax(raw_text: str) -> str:
             continue
 
         if _MD_SETEXT_HEADER.match(line) and output and output[-1].strip():
-            # Setext header underline (=== or ---) following a text line.
             continue
 
         line = _MD_ATX_HEADER.sub("", line)
@@ -633,11 +650,7 @@ def strip_markdown_syntax(raw_text: str) -> str:
 
 
 def extract_text_from_md(file: PDFInput) -> str:
-    """Extract plain text from a Markdown (.md) file.
-
-    Reads the raw Markdown source (reusing the TXT reader) and strips
-    Markdown syntax so downstream chunking/embedding sees clean prose.
-    """
+    """Extract plain text from a Markdown (.md) file."""
     raw_text = extract_text_from_txt(file)
     if not raw_text:
         return ""
@@ -665,6 +678,8 @@ def extract_text(
         raw = extract_text_from_docx(file)
     elif extension == "md":
         raw = extract_text_from_md(file)
+    elif extension == "rtf":
+        raw = extract_text_from_rtf(file)
     else:
         raw = extract_text_from_txt(file)
 
@@ -702,8 +717,3 @@ def extract_texts(files: list) -> Dict[str, str]:
         results[name] = raw_texts.get(name, "")
 
     return results
-
-
-# Cross-lingual embedding preparation (Issue #46)
-# Re-exported here because parsing is the boundary where raw source text is
-# converted into embedding-ready text.

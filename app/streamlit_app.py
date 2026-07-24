@@ -25,15 +25,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from src.core.ai_detector import detect_documents_ai_probability  # type: ignore
-from src.core.embeddings import generate_embeddings  # type: ignore
-from src.core.faiss_indexer import build_index  # type: ignore
-from src.db.auth import authenticate_user, init_db  # type: ignore
-
-# Internal Imports (Python will now correctly locate the 'src' package)
-from src.i18n.translator import get_text  # type: ignore
 from src.security.metadata_stripper import strip_exif_metadata
-from src.utils.excel_export import export_similarity_matrix_to_excel  # type: ignore
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
@@ -147,6 +139,8 @@ from src.db.incidents import (  # noqa: E402
     get_most_plagiarized_documents,
     sync_flagged_incidents,
 )
+from src.utils.diff_highlighter import highlight_overlap
+from src.utils.excel_export import export_similarity_matrix_to_excel
 from src.utils.pdf_report import highlight_pdf_matches  # noqa: E402
 from src.utils.redis_cache import (
     cache_session_state,
@@ -1138,9 +1132,6 @@ else:
     def load_analysis_results_from_db():
         import numpy as np
         import pandas as pd
-        from sklearn.metrics.pairwise import cosine_similarity
-
-        from src.db.corpus_db import get_all_documents, get_chunk_registry
 
         docs = get_all_documents()
         if not docs:
@@ -2361,8 +2352,13 @@ if not st.session_state.authenticated:
                         f"#{rank} — {doc_a} ↔ {doc_b} — {sim:.1%}{badge}",
                         expanded=st.session_state.expand_all_drill or (rank == 1),
                     ):
-                        st.write(f"**{doc_a}:** {ca}")
-                        st.write(f"**{doc_b}:** {cb}")
+                        highlighted_ca, highlighted_cb = highlight_overlap(ca, cb)
+                        st.markdown(
+                            f"**{doc_a}:** {highlighted_ca}", unsafe_allow_html=True
+                        )
+                        st.markdown(
+                            f"**{doc_b}:** {highlighted_cb}", unsafe_allow_html=True
+                        )
 
             with drill_tab_viewer:
                 selected_view_doc = st.radio(

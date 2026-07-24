@@ -2642,7 +2642,7 @@ _latest_tag: str | None = st.session_state["_update_check_tag"]
 
 _footer_col1, _footer_col2 = st.columns([3, 1])
 with _footer_col1:
-    st.caption(f"🎓 Semantic Plagiarism Detection System · v{APP_VERSION} · Streamlit")
+    st.caption(f"🎓 Semantic Plagiarism Detection System · v{APP_VERSION} · Streamlit · [🐛 Report Bug / Feedback](https://github.com/Ganesh-403/semantic-plagiarism-detector/issues)")
 with _footer_col2:
     if _latest_tag:
         st.markdown(

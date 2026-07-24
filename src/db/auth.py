@@ -1,6 +1,10 @@
 import json
 
 """
+
+src/db/auth.py
+--------------
+User authentication, registration, and credential management routines.
 auth.py
 -------
 SQLite-backed authentication with bcrypt password hashing.
@@ -23,6 +27,7 @@ import sqlite3
 
 import bcrypt
 
+# Database setup
 from src.db.migrations import migrate_auth_database
 
 _DB_PATH = os.path.abspath(
@@ -416,3 +421,14 @@ def is_user_active(username: str) -> bool:
             return bool(row[0]) if row else True
     except sqlite3.Error:
         return True
+
+
+def get_user_count() -> int:
+    """
+    Returns the total number of registered users in the system.
+    This is highly optimized for fast telemetry lookups.
+    """
+    with _connect() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM users")
+        row = cursor.fetchone()
+        return row[0] if row else 0

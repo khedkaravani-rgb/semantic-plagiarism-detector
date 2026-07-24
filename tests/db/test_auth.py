@@ -17,26 +17,9 @@ from src.db.auth import (
 
 
 @pytest.fixture(autouse=True)
-def db_connection():
-    conn = sqlite3.connect(":memory:")
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-                CREATE TABLE IF NOT EXISTS users (
-                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT    UNIQUE NOT NULL,
-                    password TEXT    NOT NULL,
-                    role     TEXT    NOT NULL DEFAULT 'teacher',
-                    tour_completed INTEGER DEFAULT 0,
-                    otp_secret TEXT DEFAULT NULL,
-                    two_factor_enabled INTEGER DEFAULT 0
-                )
-            """
-    )
-    conn.commit()
-    yield conn
-    print("In-memory database ready for testing")
-    conn.close()
+def setup_test_db(mock_db):
+    """Uses the mock_db fixture from conftest.py to isolate DB operations."""
+    yield
 
 
 # Calls the init_db function and then uses verify_user to check if default admin user created

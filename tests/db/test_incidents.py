@@ -14,11 +14,10 @@ from src.db.incidents import (
 )
 
 
-@pytest.fixture
-def test_db(tmp_path):
-    db_path = tmp_path / "incidents.db"
-    init_incident_db(db_path)
-    return db_path
+@pytest.fixture(autouse=True)
+def test_db(mock_db):
+    # Backward compatibility for tests expecting test_db fixture returning the path
+    return mock_db
 
 
 def test_build_incident_id_is_deterministic():

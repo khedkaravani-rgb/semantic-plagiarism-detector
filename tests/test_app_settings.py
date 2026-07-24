@@ -1,6 +1,8 @@
 import os
 import sys
 
+from tests.conftest import MockDataFactory
+
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -16,17 +18,12 @@ _MODIFIED_THRESHOLD = 0.70  # within valid slider range [0.0, 0.75]
 _MODIFIED_FAISS_TOP_K = 10  # within valid range [1, 20]
 
 
-def mock_embed_chunks(chunks, batch_size=64):
-    if not chunks:
-        return np.array([])
-    val = 1.0 / (384**0.5)
-    return np.full((len(chunks), 384), val, dtype="float32")
-
-
 @patch("app.streamlit_app.get_all_documents")
 @patch("src.db.corpus_db.get_all_documents")
 @patch("src.core.webhook.send_plagiarism_alert")
-@patch("src.core.embedding_model.embed_chunks", side_effect=mock_embed_chunks)
+@patch(
+    "src.core.embedding_model.embed_chunks", side_effect=MockDataFactory.embed_chunks
+)
 def test_app_settings_reset_to_defaults(
     mock_embed, mock_webhook, mock_get_all_docs_db, mock_get_all_docs_app
 ):

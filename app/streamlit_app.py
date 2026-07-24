@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from src.security.metadata_stripper import strip_exif_metadata
+
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -34,6 +36,22 @@ except ImportError:  # pragma: no cover - optional dependency
 import logging
 
 logger = logging.getLogger(__name__)
+# Validate required environment variables during application startup
+REQUIRED_ENV_VARS = [
+    "REDIS_URL",
+    "PLAGIARISM_WEBHOOK_URL",
+    "API_BEARER_TOKEN",
+]
+
+missing_env_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+
+if missing_env_vars:
+    logger.warning(
+        "Missing environment variables: %s. "
+        "Some features may not work correctly. "
+        "Please configure them in your .env file.",
+        ", ".join(missing_env_vars),
+    )
 
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -131,9 +149,10 @@ from src.utils.redis_cache import (
     is_upload_rate_limited,
 )
 from src.utils.warning_list import render_warning_controls
-from src.visualization.analytics import (  # noqa: E402
+from src.visualization.analytics import (
     plot_high_severity_trends,
     plot_most_plagiarized_documents,
+    plot_similarity_distribution,
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 
@@ -885,9 +904,6 @@ else:
     def load_analysis_results_from_db():
         import numpy as np
         import pandas as pd
-        from sklearn.metrics.pairwise import cosine_similarity
-
-        from src.db.corpus_db import get_all_documents, get_chunk_registry
 
         docs = get_all_documents()
         if not docs:
@@ -1200,9 +1216,11 @@ else:
                             )
 
                             if downloaded_dict:
-                                st.session_state.drive_files_dict.update(
-                                    downloaded_dict
-                                )
+                                scrubbed_drive = {
+                                    n: strip_exif_metadata(d, n)
+                                    for n, d in downloaded_dict.items()
+                                }
+                                st.session_state.drive_files_dict.update(scrubbed_drive)
                                 st.success(
                                     f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
                                 )
@@ -1232,7 +1250,12 @@ else:
                             f"⚠️ ZIP file '{f.name}' contains no supported documents (.pdf, .docx, .txt)."
                         )
                     else:
-                        file_bytes_dict.update(zip_files)
+                        file_bytes_dict.update(
+                            {
+                                name: strip_exif_metadata(data, name)
+                                for name, data in zip_files.items()
+                            }
+                        )
                 except ValueError as ve:
                     st.error(f"⚠️ Failed to process ZIP archive '{f.name}': {str(ve)}")
                 except (OSError, RuntimeError, TypeError):
@@ -1259,11 +1282,11 @@ else:
                         virtual_filename = (
                             f"{clean_student_name} ({f.name} - Row {idx + 1}).txt"
                         )
-                        file_bytes_dict[virtual_filename] = str(text_val).encode(
-                            "utf-8"
+                        file_bytes_dict[virtual_filename] = strip_exif_metadata(
+                            str(text_val).encode("utf-8"), virtual_filename
                         )
             else:
-                file_bytes_dict[f.name] = f.read()
+                file_bytes_dict[f.name] = strip_exif_metadata(f.read(), f.name)
             f.seek(0)
 
     # Allow analysis with existing index even without new uploads
@@ -1992,6 +2015,21 @@ else:
             doc_data = get_most_plagiarized_documents(limit=10)
             doc_fig = plot_most_plagiarized_documents(doc_data)
             st.plotly_chart(doc_fig, use_container_width=True)
+
+            st.divider()
+
+            st.subheader("📊 Similarity Score Distribution")
+            analysis_results = st.session_state.get("analysis_results")
+            if analysis_results is not None:
+                sim_matrix = (
+                    analysis_results[4] if use_chunk_matrix else analysis_results[3]
+                )
+                dist_fig = plot_similarity_distribution(sim_matrix)
+                st.plotly_chart(dist_fig, use_container_width=True)
+            else:
+                st.info(
+                    "Run a plagiarism analysis to see the similarity score distribution."
+                )
 
             st.divider()
 

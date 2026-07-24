@@ -183,7 +183,88 @@ def render_warning_controls(
     if "warning_page" not in st.session_state:
         st.session_state.warning_page = 1
 
+    from src.core.config import DEFAULT_THRESHOLDS
+    
     st.caption(f"Pairs with similarity ≥ **{threshold:.2f}**")
+    
+    active_filters = []
+    if abs(threshold - DEFAULT_THRESHOLDS.plagiarism) > 0.001:
+        active_filters.append({
+            "key": "clear_threshold",
+            "label": f"Threshold: >{threshold*100:.0f}% ⓧ",
+            "action": "threshold"
+        })
+        
+    if st.session_state.get("hide_low_severity", False):
+        active_filters.append({
+            "key": "clear_hide_low_severity",
+            "label": "Severity: Medium+ ⓧ",
+            "action": "hide_low_severity"
+        })
+        
+    warning_search = st.session_state.get("warning_search", "").strip()
+    if warning_search:
+        display_search = warning_search if len(warning_search) <= 15 else warning_search[:12] + "..."
+        active_filters.append({
+            "key": "clear_warning_search",
+            "label": f"Search: '{display_search}' ⓧ",
+            "action": "warning_search"
+        })
+        
+    selected_document_id = st.session_state.get("selected_document_id")
+    if selected_document_id:
+        display_doc = selected_document_id if len(selected_document_id) <= 15 else selected_document_id[:12] + "..."
+        active_filters.append({
+            "key": "clear_document_filter",
+            "label": f"Document: {display_doc} ⓧ",
+            "action": "selected_document_id"
+        })
+        
+    selected_class = st.session_state.get("class_filter_selectbox", "All Classes")
+    if selected_class and selected_class != "All Classes":
+        display_class = selected_class if len(selected_class) <= 15 else selected_class[:12] + "..."
+        active_filters.append({
+            "key": "clear_class_filter",
+            "label": f"Class: {display_class} ⓧ",
+            "action": "class_filter"
+        })
+
+    if active_filters:
+        st.markdown(
+            '''<style>
+            /* Make buttons look like small pills */
+            div[data-testid="column"] button {
+                border-radius: 16px !important;
+                padding: 2px 12px !important;
+                min-height: 28px !important;
+                height: 28px !important;
+                font-size: 13px !important;
+            }
+            </style>''',
+            unsafe_allow_html=True
+        )
+        cols = st.columns([len(f["label"]) for f in active_filters] + [20])
+        for idx, f in enumerate(active_filters):
+            with cols[idx]:
+                if st.button(f["label"], key=f["key"]):
+                    if f["action"] == "threshold":
+                        st.session_state.threshold = DEFAULT_THRESHOLDS.plagiarism
+                        st.session_state.threshold_slider = DEFAULT_THRESHOLDS.plagiarism
+                        if "last_seen_threshold_query" in st.session_state:
+                            del st.session_state["last_seen_threshold_query"]
+                        # In Streamlit >= 1.30, st.query_params is dict-like
+                        if "threshold" in st.query_params:
+                            del st.query_params["threshold"]
+                    elif f["action"] == "hide_low_severity":
+                        st.session_state.hide_low_severity = False
+                    elif f["action"] == "warning_search":
+                        st.session_state.warning_search = ""
+                    elif f["action"] == "selected_document_id":
+                        st.session_state.selected_document_id = None
+                    elif f["action"] == "class_filter":
+                        st.session_state.class_filter_selectbox = "All Classes"
+                    st.rerun()
+
     dismissed_pairs = get_false_positives()
     filtered_flags = [
         f

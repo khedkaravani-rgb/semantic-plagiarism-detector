@@ -1,6 +1,10 @@
 import json
 
 """
+
+src/db/auth.py
+--------------
+User authentication, registration, and credential management routines.
 auth.py
 -------
 SQLite-backed authentication with bcrypt password hashing.
@@ -96,7 +100,8 @@ def init_db() -> None:
 
 
 def verify_user(username: str, password: str) -> bool:
-    """Return True if username exists and password matches the stored hash."""
+    """Return True if username exists, password matches the stored hash, and account is active."""
+    init_db()  # Ensure DB is initialized
     try:
         username = _validate_username(username)
         password = _validate_password(password)
@@ -109,17 +114,17 @@ def verify_user(username: str, password: str) -> bool:
             (username,),
         ).fetchone()
 
-    if not row:
-        return False
+        if not row:
+            return False
 
-    stored_hash, is_active = row
-    if not is_active:
-        return False
+        stored_hash, is_active = row
+        if not is_active:
+            return False
 
-    try:
-        return bcrypt.checkpw(password.encode(), stored_hash.encode())
-    except ValueError:
-        return False
+        try:
+            return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        except ValueError:
+            return False
 
 
 # Alias for compatibility
@@ -416,3 +421,14 @@ def is_user_active(username: str) -> bool:
             return bool(row[0]) if row else True
     except sqlite3.Error:
         return True
+
+
+def get_user_count() -> int:
+    """
+    Returns the total number of registered users in the system.
+    This is highly optimized for fast telemetry lookups.
+    """
+    with _connect() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM users")
+        row = cursor.fetchone()
+        return row[0] if row else 0

@@ -22,6 +22,7 @@ from src.db.auth import (
 @pytest.fixture(autouse=True)
 def setup_test_db(mock_db):
     """Uses the mock_db fixture from conftest.py to isolate DB operations."""
+    init_db()
     yield
 
 
@@ -132,3 +133,18 @@ def test_suspend_account():
 
     delete_user(username)
     delete_user("admin")
+
+
+def test_sqlite_file_lock_exception(mock_db):
+    """Test that acquiring an exclusive lock on SQLite database triggers a clean sqlite3.Error when attempting add_user."""
+    conn = sqlite3.connect(mock_db)
+    conn.execute("BEGIN EXCLUSIVE TRANSACTION")
+    try:
+        with pytest.raises(sqlite3.Error) as exc_info:
+            add_user("locked_user", "password123")
+        assert "Failed to add user" in str(exc_info.value) or "locked" in str(
+            exc_info.value
+        )
+    finally:
+        conn.rollback()
+        conn.close()

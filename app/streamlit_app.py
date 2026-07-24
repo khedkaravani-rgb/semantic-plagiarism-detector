@@ -129,9 +129,10 @@ from src.utils.redis_cache import (
     is_upload_rate_limited,
 )
 from src.utils.warning_list import render_warning_controls
-from src.visualization.analytics import (  # noqa: E402
+from src.visualization.analytics import (
     plot_high_severity_trends,
     plot_most_plagiarized_documents,
+    plot_similarity_distribution,
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 
@@ -2058,6 +2059,17 @@ else:
         doc_data = get_most_plagiarized_documents(limit=10)
         doc_fig = plot_most_plagiarized_documents(doc_data)
         st.plotly_chart(doc_fig, use_container_width=True)
+
+        st.divider()
+
+        st.subheader("📊 Similarity Score Distribution")
+        analysis_results = st.session_state.get("analysis_results")
+        if analysis_results is not None:
+            sim_matrix = analysis_results[4] if use_chunk_matrix else analysis_results[3]
+            dist_fig = plot_similarity_distribution(sim_matrix)
+            st.plotly_chart(dist_fig, use_container_width=True)
+        else:
+            st.info("Run a plagiarism analysis to see the similarity score distribution.")
 
         st.divider()
 

@@ -1463,7 +1463,7 @@ else:
 
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
-    flags = flag_plagiarism(active_sim_df, threshold=threshold)
+    flags = flag_plagiarism(active_sim_df, threshold=threshold, chunked_docs=chunked_docs,embeddings=embeddings)
 
     # Network Graph Node Click Filtering setup
     selected_document_id = st.session_state.get("selected_document_id")

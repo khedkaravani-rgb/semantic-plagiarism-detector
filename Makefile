@@ -4,9 +4,9 @@
 run:
 	streamlit run app/streamlit_app.py
 
-# Run the test suite with coverage report
+# Run the test suite
 test:
-	pytest --cov=src --cov-report=term-missing
+	pytest
 
 # Run code formatters and linters check
 lint:

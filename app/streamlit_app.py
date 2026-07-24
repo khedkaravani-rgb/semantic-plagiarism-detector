@@ -10,9 +10,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
-# Standard / Third-party imports
 import base64
-import io
+
+# Standard / Third-party imports
 import time
 
 import _io
@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -76,7 +77,7 @@ from src.core.document_parser import (
     extract_text,
     remove_ignore_phrases,
 )
-from src.core.embedding_model import embed_chunks
+from src.core.embedding_model import embed_chunks, embed_documents
 from src.core.faiss_index import (
     build_index_from_matrix,
     load_index,
@@ -90,7 +91,7 @@ from src.core.similarity import (
     flag_plagiarism,
 )
 from src.core.webhook import send_plagiarism_alert
-from src.i18n.translator import _SUPPORTED_LANGUAGES, get_text
+from src.i18n.translator import _SUPPORTED_LANGUAGES
 from src.visualization.network_graph import plot_similarity_network
 
 
@@ -125,7 +126,6 @@ from src.db.auth import (
     get_tour_completed,
     get_user_preferences,
     get_user_role,
-    init_db,
     is_user_active,
     record_failed_login,
     set_tour_completed,
@@ -233,6 +233,7 @@ st.set_page_config(
     page_title="Semantic Plagiarism Detector",
     page_icon="🔍",
     layout="wide",
+    initial_sidebar_state="auto",
 )
 
 
@@ -245,19 +246,6 @@ if "pdf_passwords" not in st.session_state:
 if "lang" not in st.session_state:
     st.session_state.lang = "en"
 
-# -----------------------------------------------------------------------------
-# Sidebar Settings Configuration
-# -----------------------------------------------------------------------------
-with st.sidebar:
-    st.title("⚙️ " + get_text("settings", lang=st.session_state.lang))
-
-    # 1. i18n Language Dropdown (#144)
-    selected_lang_name = st.selectbox(
-        "🌐 Language / Idioma",
-        options=["English", "Español"],
-        index=0 if st.session_state.lang == "en" else 1,
-        initial_sidebar_state="auto",
-    )
 st.markdown(back_to_top_html(), unsafe_allow_html=True)
 inject_css()
 
@@ -512,14 +500,32 @@ elif "threshold_slider" not in st.session_state:
 
 
 # Resolve fallback configuration variables (ensuring all roles have access to these settings)
+selected_lang_name = st.session_state.get("lang_selector", "English")
+lang_code = "es" if selected_lang_name == "Español" else "en"
+
 threshold = st.session_state.get("threshold_slider", DEFAULT_THRESHOLDS.plagiarism)
 faiss_top_k = st.session_state.get("faiss_top_k_slider", 5)
 use_chunk_matrix = st.session_state.get("chunk_matrix_checkbox", False)
 chunk_size = st.session_state.get("chunk_size_slider", 500)
 chunk_overlap = st.session_state.get("chunk_overlap_slider", 50)
 ignore_phrases = st.session_state.get("ignore_phrases_textarea", "")
-ocr_language = st.session_state.get("ocr_language_selector", DEFAULT_OCR_LANGUAGE)
+ocr_language_selector_val = st.session_state.get(
+    "ocr_language_selector", DEFAULT_OCR_LANGUAGE
+)
+ocr_language_map = {
+    "English": "eng",
+    "Español": "spa",
+    "Français": "fra",
+    "eng": "eng",
+    "spa": "spa",
+    "fra": "fra",
+}
+ocr_language = ocr_language_map.get(ocr_language_selector_val, DEFAULT_OCR_LANGUAGE)
 ocr_dpi = st.session_state.get("ocr_dpi_slider", DEFAULT_OCR_DPI)
+heatmap_cmap = "OrRd"
+
+unique_classes = ["All Classes"] + get_unique_class_sections()
+selected_class = st.session_state.get("class_filter_selectbox", "All Classes")
 
 
 @st.dialog("⚠️ Confirm Bulk Clear")
@@ -578,6 +584,14 @@ _, theme_col = st.columns([0.94, 0.06])
 
 with theme_col:
     theme_icon = "☀️" if current_theme == "Dark" else "🌙"
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        _ctx = get_script_run_ctx()
+        if _ctx and _ctx.current_form_id:
+            _ctx.current_form_id = ""
+    except Exception:
+        pass
     if st.button(theme_icon, key="theme_toggle"):
         new_theme = "Light" if current_theme == "Dark" else "Dark"
         set_theme(new_theme)
@@ -585,8 +599,6 @@ with theme_col:
 
 
 # ── Sidebar (ROLE RESTRICTED Settings & i18n) ─────────────────────────────────
-unique_classes = ["All Classes"] + get_unique_class_sections()
-selected_class = "All Classes"
 
 
 def save_preferences_callback():
@@ -624,191 +636,8 @@ with st.sidebar:
                 del st.session_state[key]
         clear_session(SESSION_ID)
         st.rerun()
-    st.markdown("---")
-
-    selected_lang_name = st.selectbox(
-        "🌐 Language / Idioma",
-        options=list(_SUPPORTED_LANGUAGES.values()),
-        index=0,
-        key="lang_selector",
-    )
-    lang_code = "es" if selected_lang_name == "Español" else "en"
-
-    st.markdown(f"### {get_text('settings', lang=lang_code)}")
-
-    selected_theme = st.radio(
-        get_text("theme", lang=lang_code),
-        options=["Light", "Dark"],
-        index=0 if current_theme == "Light" else 1,
-        horizontal=True,
-        key="theme_selector",
-        on_change=save_preferences_callback,
-    )
-    if selected_theme != current_theme:
-        set_theme(selected_theme)
-        st.rerun()
-
-    # 🎨 Color Map Selection Dropdown (#186)
-    st.markdown("---")
-    st.subheader("🎨 Heatmap Color Map")
-    heatmap_cmap = st.selectbox(
-        "Select Color Scale",
-        options=["OrRd", "viridis", "plasma", "magma", "cividis", "coolwarm", "YlGnBu"],
-        index=0,
-        key="heatmap_cmap_selector",
-    )
 
     if user_role == "admin":
-        st.markdown("---")
-        threshold = st.slider(
-            get_text("threshold", lang=lang_code),
-            min_value=0.0,
-            max_value=1.0,
-            value=DEFAULT_THRESHOLDS.plagiarism,
-            step=0.01,
-            help=(
-                "Controls which pairs are flagged. Severity remains Medium "
-                f"at {DEFAULT_THRESHOLDS.medium:.0%} and High "
-                f"at {DEFAULT_THRESHOLDS.high:.0%}."
-            ),
-            key="threshold_slider",
-            on_change=save_preferences_callback,
-        )
-        st.query_params["threshold"] = f"{threshold:.2f}"
-        st.session_state.last_seen_threshold_query = f"{threshold:.2f}"
-        selected_class = st.selectbox(
-            "Filter by Class Section",
-            options=unique_classes,
-            key="class_filter_selectbox",
-        )
-
-        use_chunk_matrix = st.checkbox(
-            "Use chunk-level similarity matrix",
-            value=False,
-            key="chunk_matrix_checkbox",
-        )
-
-        faiss_top_k = st.slider(
-            "FAISS: matches per chunk",
-            1,
-            20,
-            value=5,
-            key="faiss_top_k_slider",
-        )
-
-        # ── Customizable Chunk Size & Overlap Sliders ─────────────────
-
-        with st.expander("✂️ Ignore Phrases", expanded=False):
-
-            st.caption(
-                "Enter common template text or standard assignment questions to ignore during analysis. "
-                "These phrases will be removed from documents before chunking and embedding."
-            )
-            ignore_phrases = st.text_area(
-                "Ignore Phrases (one per line)",
-                placeholder="Q1: Explain the theory of relativity\nQ2: Describe the process of photosynthesis",
-                help="Each line represents a phrase to ignore.",
-                key="ignore_phrases_textarea",
-            )
-
-        with st.expander("� OCR Settings", expanded=False):
-            st.caption(
-                "Used only for scanned or image-only PDF pages. "
-                "Text-based PDFs continue to use native extraction."
-            )
-        # ── Customizable Chunk Size & Overlap Sliders (#153) ─────────────────
-
-        st.markdown("### ✂️ Chunking Settings")
-        chunk_size = st.slider(
-            "Chunk Size (characters)",
-            200,
-            2000,
-            value=500,
-            step=50,
-            help="Target character length for text chunks during embedding.",
-            key="chunk_size_slider",
-        )
-        chunk_overlap = st.slider(
-            "Chunk Overlap (characters)",
-            0,
-            500,
-            value=50,
-            step=10,
-            help="Character overlap between consecutive chunks to preserve contextual boundary.",
-            key="chunk_overlap_slider",
-        )
-
-        ocr_language = DEFAULT_OCR_LANGUAGE
-        ocr_dpi = DEFAULT_OCR_DPI
-
-        with st.expander("🔤 OCR Settings", expanded=False):
-            st.caption(
-                "Used only for scanned or image-only PDF pages. Text-based PDFs continue to use native extraction."
-            )
-            ocr_language_labels = {
-                display_name: code
-                for code, display_name in SUPPORTED_OCR_LANGUAGES.items()
-            }
-            language_names = list(ocr_language_labels)
-            default_language_name = SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]
-
-            selected_ocr_language_name = st.selectbox(
-                "OCR Language",
-                options=language_names,
-                index=language_names.index(default_language_name),
-                key="ocr_language_selector",
-            )
-            ocr_language = ocr_language_labels[selected_ocr_language_name]
-
-            ocr_dpi = st.slider(
-                "OCR DPI Resolution",
-                min_value=150,
-                max_value=400,
-                value=DEFAULT_OCR_DPI,
-                step=25,
-                key="ocr_dpi_slider",
-            )
-
-        st.markdown("")
-        if st.button(
-            "🔄 Reset to Factory Defaults",
-            key="reset_defaults_button",
-            use_container_width=True,
-        ):
-            keys_to_reset = [
-                "theme_selector",
-                "threshold_slider",
-                "class_filter_selectbox",
-                "chunk_matrix_checkbox",
-                "faiss_top_k_slider",
-                "ignore_phrases_textarea",
-                "chunk_size_slider",
-                "chunk_overlap_slider",
-                "ocr_language_selector",
-                "ocr_dpi_slider",
-            ]
-            for key in keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
-            if "threshold" in st.query_params:
-                del st.query_params["threshold"]
-            set_theme("Light")
-            st.success("✅ Settings reset to defaults!")
-            st.rerun()
-
-        st.markdown("")
-        if st.button(
-            "🔍 Ping Redis", key="ping_redis_button", use_container_width=True
-        ):
-            from src.utils.redis_cache import get_cache
-
-            connected, latency = get_cache().ping()
-            if connected:
-                st.success(f"✅ Connected ({latency} ms ping)")
-            else:
-                st.error("🚨 Disconnected")
-            st.rerun()
-
         st.markdown("---")
         st.markdown("### 📁 Document Management")
         existing_docs = get_all_documents()
@@ -1166,34 +995,12 @@ if user_role != "admin":
     st.info(
         "🔒 Note: Direct assignment uploads are restricted to Administrator access."
     )
-    st.session_state.lang = "en" if selected_lang_name == "English" else "es"
-    current_lang = st.session_state.lang
-
-    st.markdown("---")
-
-    # 2. Similarity Threshold Slider
-    similarity_threshold = st.slider(
-        get_text("threshold", lang=current_lang),
-        min_value=0.0,
-        max_value=1.0,
-        value=0.75,
-        step=0.05,
+    query_text = st.text_area(
+        "Search Query Text:",
+        placeholder="Paste document content here to search for matching plagiarism...",
+        height=200,
     )
 
-    st.markdown("---")
-
-    # 3. Text Chunking Settings
-    st.subheader("✂️ Chunking Settings")
-    chunk_size = st.number_input(
-        "Chunk Size (words)", min_value=50, max_value=1000, value=200, step=50
-    )
-    chunk_overlap = st.number_input(
-        "Chunk Overlap (words)", min_value=0, max_value=200, value=50, step=10
-    )
-
-    st.markdown("---")
-
-    # 4. Google Drive Integration Section
     if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
 
         with st.spinner("Loading index and searching..."):
@@ -1624,7 +1431,6 @@ if not st.session_state.authenticated:
         else:
             st.error("Invalid username or password.")
     st.stop()
-
     # 2. GOOGLE DRIVE IMPORT SECTION (#146)
     try:
         from src.utils.google_drive import bulk_download_drive_folder
@@ -1751,30 +1557,6 @@ if not st.session_state.authenticated:
     url_text = st.session_state.url_text
     url_filename = st.session_state.url_filename
 
-    has_files = len(file_bytes_dict) >= 2
-    has_url = url_text is not None
-
-    if not has_files and not has_url:
-        if st.session_state.analysis_results is None:
-            st.info(
-                "👆 Please upload **at least 2** PDF assignment files or paste a URL to begin."
-            )
-            st.stop()
-        else:
-            st.success(
-                f"📂 Using existing index with {faiss_index.ntotal if faiss_index else 0} vectors from {len(get_all_documents())} documents"
-            )
-            from src.db.corpus_db import get_all_documents
-
-            # Skip to analysis section with existing index
-            file_bytes_dict = {doc["filename"]: b"" for doc in get_all_documents()}
-            raw_texts = st.session_state.analysis_results[0]
-            chunked_docs = st.session_state.analysis_results[1]
-            embeddings = st.session_state.analysis_results[2]
-            sim_df = st.session_state.analysis_results[3]
-            chunk_sim_df = st.session_state.analysis_results[4]
-            ai_probabilities = st.session_state.analysis_results[7]
-
     if st.session_state.drive_files_dict:
         for g_name, g_bytes in st.session_state.drive_files_dict.items():
             if len(g_bytes) > MAX_FILE_SIZE_BYTES:
@@ -1783,6 +1565,56 @@ if not st.session_state.authenticated:
                 )
             else:
                 file_bytes_dict[g_name] = g_bytes
+
+    # 3. PDF Decryption Check
+    encrypted_files_detected = []
+    import fitz
+
+    for file_name, file_bytes in list(file_bytes_dict.items()):
+        if file_name.lower().endswith(".pdf"):
+            try:
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                is_encrypted = doc.is_encrypted or doc.needs_pass
+                doc.close()
+
+                if is_encrypted:
+                    user_pass = st.session_state.pdf_passwords.get(file_name, None)
+                    if not user_pass:
+                        encrypted_files_detected.append(file_name)
+                    else:
+                        doc = fitz.open(stream=file_bytes, filetype="pdf")
+                        auth_success = doc.authenticate(user_pass)
+                        if not auth_success:
+                            encrypted_files_detected.append(file_name)
+                        else:
+                            file_bytes_dict[file_name] = doc.write()
+                        doc.close()
+            except Exception:
+                pass
+
+    if encrypted_files_detected:
+        st.warning(
+            "🔒 Password-protected PDF(s) detected! Please enter the password(s) below:"
+        )
+        for enc_file in encrypted_files_detected:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                input_pass = st.text_input(
+                    f"Password for '{enc_file}'",
+                    type="password",
+                    key=f"pass_input_{enc_file}",
+                )
+            with col2:
+                st.write(" ")
+                st.write(" ")
+                if st.button("Decrypt PDF", key=f"btn_decrypt_{enc_file}"):
+                    if input_pass:
+                        st.session_state.pdf_passwords[enc_file] = input_pass
+                        st.success(f"Password saved for {enc_file}!")
+                        st.rerun()
+                    else:
+                        st.error("Please enter a password.")
+        st.stop()
 
     # 4. PIPELINE STOP CHECK
     if len(file_bytes_dict) < 2 and url_text is None:
@@ -1796,39 +1628,6 @@ if not st.session_state.authenticated:
                 unsafe_allow_html=True,
             )
             st.stop()
-        else:
-            if faiss_index is not None:
-                st.success(
-                    f"📂 Using existing index with {faiss_index.ntotal} vectors from {len(get_all_documents())} documents"
-                )
-            file_bytes_dict = {}
-
-
-# -----------------------------------------------------------------------------
-# Header Section
-# -----------------------------------------------------------------------------
-st.title(get_text("title", lang=current_lang))
-st.caption(get_text("subtitle", lang=current_lang))
-
-st.markdown("---")
-
-# -----------------------------------------------------------------------------
-# Upload & Decryption Processing Section (#167)
-# -----------------------------------------------------------------------------
-st.subheader(get_text("upload_title", lang=current_lang))
-
-uploaded_files = st.file_uploader(
-    "Upload PDF, DOCX, or TXT documents",
-    type=["pdf", "docx", "txt"],
-    accept_multiple_files=True,
-)
-
-
-# Merge locally uploaded files with Google Drive imports if available
-file_dict = {}
-if uploaded_files:
-    for uf in uploaded_files:
-        file_dict[uf.name] = uf.getvalue()
 
     st.markdown("### 📝 Set Document Metadata")
     col1, col2 = st.columns(2)
@@ -1894,7 +1693,6 @@ if uploaded_files:
                     "student_name": student_name.strip(),
                     "class_section": class_section.strip(),
                     "assignment_title": assignment_title.strip(),
-                    "tags": batch_tags.strip(),
                 }
 
     if url_filename:
@@ -1960,67 +1758,61 @@ if uploaded_files:
                 for name, text in raw_texts.items()
             }
 
-            # Original chunks are preserved for UI display.
-            raw_texts[name] = extract_text(
-                _io.BytesIO(data),
-                name,
-                ocr_language=ocr_language,
-                ocr_dpi=ocr_dpi,
+        chunked_docs = chunk_documents(
+            raw_texts, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
+        translated_chunked_docs = {}
+
+        for doc_name, chunks in chunked_docs.items():
+            translated_chunked_docs[doc_name] = []
+            for chunk in chunks:
+                prepared = prepare_text_for_embedding(chunk)
+                translated_chunked_docs[doc_name].append(prepared["embedding_text"])
+
+        embeddings = embed_documents(translated_chunked_docs)
+        sim_df = document_similarity_matrix(embeddings)
+
+        names = list(embeddings.keys())
+        n = len(names)
+        chunk_mat = np.zeros((n, n))
+
+        for i, na in enumerate(names):
+            for j, nb in enumerate(names):
+                if i == j:
+                    chunk_mat[i, j] = 1.0
+                elif j > i:
+                    ea, eb = embeddings[na], embeddings[nb]
+                    score = (
+                        float(np.max(cosine_similarity(ea, eb)))
+                        if ea.size and eb.size
+                        else 0.0
+                    )
+                    chunk_mat[i, j] = score
+                    chunk_mat[j, i] = score
+
+        chunk_sim_df = pd.DataFrame(chunk_mat, index=names, columns=names)
+
+        memory = psutil.virtual_memory()
+        if memory.percent >= 85:
+            st.warning(
+                "⚠️ High memory usage detected (>85%). Large FAISS indexes may cause system instability or out-of-memory crashes."
             )
 
+        faiss_index, registry = build_index(embeddings, chunked_docs)
+        ai_probabilities = detect_documents_ai_probability(chunked_docs)
 
-if "gdrive_files" in st.session_state:
-    for gname, gbytes in st.session_state["gdrive_files"].items():
-        if gname not in file_dict:
-            file_dict[gname] = gbytes
+        return (
+            raw_texts,
+            chunked_docs,
+            embeddings,
+            sim_df,
+            chunk_sim_df,
+            faiss_index,
+            registry,
+            ai_probabilities,
+        )
 
-
-parsed_file_texts = {}
-encrypted_files_detected = []
-
-if file_dict:
-    for file_name, file_bytes in file_dict.items():
-        if file_name.lower().endswith(".pdf"):
-            user_pass = st.session_state.pdf_passwords.get(file_name, None)
-            try:
-                extracted_text, is_protected = extract_text_from_pdf(
-                    file_bytes, password=user_pass
-                )
-                parsed_file_texts[file_name] = extracted_text
-            except EncryptedPDFError:
-                encrypted_files_detected.append(file_name)
-        elif file_name.lower().endswith(".txt"):
-            parsed_file_texts[file_name] = file_bytes.decode("utf-8", errors="ignore")
-        elif file_name.lower().endswith(".docx"):
-            import docx
-
-            doc = docx.Document(io.BytesIO(file_bytes))
-            parsed_file_texts[file_name] = "\n".join([p.text for p in doc.paragraphs])
-
-# Prompt for Password-Protected PDFs (#167)
-if encrypted_files_detected:
-    st.warning(
-        "🔒 Password-protected PDF(s) detected! Please enter the password(s) below:"
-    )
-
-    for enc_file in encrypted_files_detected:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            input_pass = st.text_input(
-                f"Password for '{enc_file}'",
-                type="password",
-                key=f"pass_input_{enc_file}",
-            )
-        with col2:
-            st.write(" ")
-            st.write(" ")
-            if st.button("Decrypt PDF", key=f"btn_decrypt_{enc_file}"):
-                if input_pass:
-                    st.session_state.pdf_passwords[enc_file] = input_pass
-                    st.success(f"Password saved for {enc_file}!")
-                    st.rerun()
-                else:
-                    st.error("Please enter a password.")
+    has_enough_files = (len(file_bytes_dict) + (1 if url_text else 0)) >= 2
 
     # Run Pipeline if files uploaded
     if (len(file_bytes_dict) > 0 and any(file_bytes_dict.values())) or url_text:
@@ -2096,50 +1888,97 @@ if encrypted_files_detected:
                 flagged_tags_filtered.append(flag)
         filtered_flags = flagged_tags_filtered
 
-    # ── Summary Metrics ───────────────────────────────────────────────────────────
-    if len(file_bytes_dict) < 2 and url_text is None:
-        st.markdown(
-            empty_state_html(
-                "Waiting for Files",
-                "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
-                "📂",
-            ),
-            unsafe_allow_html=True,
-        )
-        st.stop()
-
-    if "sent_alerts" not in st.session_state:
-        st.session_state.sent_alerts = set()
-
-    for flag in filtered_flags:
-        alert_key = (flag["doc_a"], flag["doc_b"])
-        if alert_key not in st.session_state.sent_alerts:
+        # Run Pipeline if files uploaded
+        if (len(file_bytes_dict) > 0 and any(file_bytes_dict.values())) or url_text:
             try:
-                send_plagiarism_alert(
-                    doc_a=flag["doc_a"],
-                    doc_b=flag["doc_b"],
-                    similarity=float(flag["similarity"]),
+                with st.spinner("🧠 Processing files and building embeddings…"):
+                    analysis_results = run_pipeline(
+                        file_bytes_dict=file_bytes_dict,
+                        ocr_language=ocr_language,
+                        ocr_dpi=ocr_dpi,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        url_text=url_text,
+                        url_filename=url_filename,
+                    )
+                    (
+                        raw_texts,
+                        chunked_docs,
+                        embeddings,
+                        sim_df,
+                        chunk_sim_df,
+                        faiss_index,
+                        registry,
+                        ai_probabilities,
+                    ) = analysis_results
+                    st.session_state.analysis_results = analysis_results
+            except OCRFileBatchError as exc:
+                from src.errors import OCR_DEPENDENCIES_MISSING
+
+                st.error(f"🚨 {OCR_DEPENDENCIES_MISSING}")
+                if exc.failed_files:
+                    st.warning(f"Failed files: {', '.join(exc.failed_files)}")
+                st.stop()
+
+        active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
+        flags = flag_plagiarism(
+            active_sim_df,
+            threshold=threshold,
+            chunked_docs=chunked_docs,
+            embeddings=embeddings,
+        )
+
+        # Network Graph Node Click Filtering setup
+        selected_document_id = st.session_state.get("selected_document_id")
+        if selected_document_id:
+            filtered_flags = [
+                flag
+                for flag in flags
+                if (
+                    flag["doc_a"] == selected_document_id
+                    or flag["doc_b"] == selected_document_id
                 )
-                st.session_state.sent_alerts.add(alert_key)
-            except (ConnectionError, RuntimeError, OSError):
-                pass
+            ]
+        else:
+            filtered_flags = flags
+    else:
+        flags = []
+        filtered_flags = []
+        active_sim_df = None
 
-    st.subheader(get_text("analysis_summary", lang=lang_code))
-    doc_names = list(raw_texts.keys())
-    n_docs = len(doc_names)
-    total_pairs = n_docs * (n_docs - 1) // 2 if n_docs > 1 else 0
-    n_flagged = len(flags)
+    if has_enough_files:
+        if "sent_alerts" not in st.session_state:
+            st.session_state.sent_alerts = set()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric(get_text("metric_docs", lang=lang_code), n_docs)
-    col2.metric(get_text("metric_pairs", lang=lang_code), total_pairs)
-    col3.metric(get_text("metric_flagged", lang=lang_code), n_flagged)
-    col4.metric(
-        get_text("metric_faiss", lang=lang_code),
-        faiss_index.ntotal if faiss_index is not None else 0,
-    )
-    col5.metric("🎯 Threshold", f"{threshold:.0%}")
-    st.divider()
+        for flag in filtered_flags:
+            alert_key = (flag["doc_a"], flag["doc_b"])
+            if alert_key not in st.session_state.sent_alerts:
+                try:
+                    send_plagiarism_alert(
+                        doc_a=flag["doc_a"],
+                        doc_b=flag["doc_b"],
+                        similarity=float(flag["similarity"]),
+                    )
+                    st.session_state.sent_alerts.add(alert_key)
+                except (ConnectionError, RuntimeError, OSError):
+                    pass
+
+        st.subheader(get_text("analysis_summary", lang=lang_code))
+        doc_names = list(raw_texts.keys())
+        n_docs = len(doc_names)
+        total_pairs = n_docs * (n_docs - 1) // 2 if n_docs > 1 else 0
+        n_flagged = len(flags)
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric(get_text("metric_docs", lang=lang_code), n_docs)
+        col2.metric(get_text("metric_pairs", lang=lang_code), total_pairs)
+        col3.metric(get_text("metric_flagged", lang=lang_code), n_flagged)
+        col4.metric(
+            get_text("metric_faiss", lang=lang_code),
+            faiss_index.ntotal if faiss_index is not None else 0,
+        )
+        col5.metric("🎯 Threshold", f"{threshold:.0%}")
+        st.divider()
 
     # ── Application Tabs (Translated i18n Headers) ────────────────────────────
     (
@@ -2150,6 +1989,7 @@ if encrypted_files_detected:
         tab_drill,
         tab_analytics,
         tab_users,
+        tab_settings,
     ) = st.tabs(
         [
             get_text("tab_warnings", lang=lang_code),
@@ -2159,7 +1999,9 @@ if encrypted_files_detected:
             get_text("tab_drill", lang=lang_code),
             get_text("tab_analytics", lang=lang_code),
             get_text("tab_users", lang=lang_code),
-        ]
+            get_text("tab_settings", lang=lang_code),
+        ],
+        key="main_tabs",
     )
 
     # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
@@ -2197,9 +2039,9 @@ if encrypted_files_detected:
                 st.session_state.selected_document_id = None
                 st.rerun()
 
-        render_warning_controls(
-            filtered_flags, threshold=threshold, ai_probabilities=ai_probabilities
-        )
+            render_warning_controls(
+                filtered_flags, threshold=threshold, ai_probabilities=ai_probabilities
+            )
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
@@ -2223,10 +2065,9 @@ if encrypted_files_detected:
 
         if st.button("🔍 Run FAISS Search", key="run_faiss_search_btn"):
             if faiss_query.strip() and faiss_index is not None:
-
                 try:
                     from src.core.embeddings import generate_embeddings  # type: ignore
-                    from src.core.faiss_index import (
+                    from src.core.faiss_indexer import (
                         search_similar_chunks,  # type: ignore
                     )
 
@@ -2238,7 +2079,6 @@ if encrypted_files_detected:
                         top_k=faiss_top_k if "faiss_top_k" in locals() else 5,
                         threshold=threshold,
                     )
-
                     if q_results:
                         for rec, score in q_results:
                             st.markdown(
@@ -2252,19 +2092,6 @@ if encrypted_files_detected:
             else:
                 st.warning("Please enter a valid query string.")
 
-                q_vec = embed_chunks([faiss_query.strip()])[0]
-                q_results = search_similar_chunks(
-                    q_vec, faiss_index, registry, top_k=faiss_top_k, threshold=threshold
-                )
-                if q_results:
-                    for rec, score in q_results:
-                        st.markdown(
-                            f"**{rec.doc_name}** (Chunk #{rec.chunk_index}) — Similarity: `{score:.1%}`"
-                        )
-                        st.caption(rec.chunk_text)
-                else:
-                    st.info("No matching vector chunks found above threshold.")
-
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
         st.markdown("🏠 Home > Dashboard > **Similarity Matrix**")
@@ -2274,6 +2101,7 @@ if encrypted_files_detected:
 
             st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
         else:
+
             # Apply chosen colormap to matrix styling (#186)
             st.dataframe(
                 active_sim_df.style.background_gradient(cmap=heatmap_cmap).format(
@@ -2345,10 +2173,15 @@ if encrypted_files_detected:
 
         st.markdown("🏠 Home > Dashboard > **Heatmap & Network**")
         st.subheader(get_text("tab_heatmap", lang=lang_code))
-        if active_sim_df is None:
-            from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
-
-            st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
+        if not has_enough_files or active_sim_df is None:
+            st.markdown(
+                empty_state_html(
+                    "Waiting for Files",
+                    "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                    "📂",
+                ),
+                unsafe_allow_html=True,
+            )
         else:
             heatmap_fig = plot_similarity_heatmap(
                 active_sim_df,
@@ -2467,10 +2300,15 @@ if encrypted_files_detected:
         )
         st.session_state.expand_all_drill = expand_all_drill
 
-        if active_sim_df is None:
-            from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
-
-            st.info(UI_SIMILARITY_MATRIX_REUPLOAD)
+        if not has_enough_files or active_sim_df is None:
+            st.markdown(
+                empty_state_html(
+                    "Waiting for Files",
+                    "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                    "📂",
+                ),
+                unsafe_allow_html=True,
+            )
         elif len(active_sim_df) < 2:
             from src.errors import UI_NEED_MIN_DOCUMENTS
 
@@ -2556,52 +2394,64 @@ if encrypted_files_detected:
     with tab_analytics:
         st.markdown("🏠 Home > Dashboard > **Analytics Dashboard**")
         st.subheader("📊 Plagiarism Analytics Dashboard")
-        if flags:
-            sync_flagged_incidents(flags)
-
-        st.subheader("📈 High Severity Plagiarism Trends (Last 30 Days)")
-        trend_data = get_high_severity_trends(days=30)
-        trend_fig = plot_high_severity_trends(trend_data)
-        st.plotly_chart(trend_fig, use_container_width=True)
-
-        st.divider()
-        st.subheader("🔝 Most Frequently Plagiarized Documents")
-        doc_data = get_most_plagiarized_documents(limit=10)
-        doc_fig = plot_most_plagiarized_documents(doc_data)
-        st.plotly_chart(doc_fig, use_container_width=True)
-
-        st.divider()
-
-        st.subheader("📊 Similarity Score Distribution")
-        analysis_results = st.session_state.get("analysis_results")
-        if analysis_results is not None:
-            sim_matrix = (
-                analysis_results[4] if use_chunk_matrix else analysis_results[3]
-            )
-            dist_fig = plot_similarity_distribution(sim_matrix)
-            st.plotly_chart(dist_fig, use_container_width=True)
-        else:
-            st.info(
-                "Run a plagiarism analysis to see the similarity score distribution."
-            )
-
-        st.divider()
-
-        # Summary statistics
-        st.subheader("📋 Analytics Summary")
-        if trend_data:
-            total_high_severity = sum(item["count"] for item in trend_data)
-            st.metric("Total High Severity Incidents (30 days)", total_high_severity)
-        else:
-            st.info("No high severity incidents recorded in the last 30 days.")
-
-        if doc_data:
-            st.metric(
-                "Most Plagiarized Document",
-                f"{doc_data[0]['document_name']} ({doc_data[0]['incident_count']} incidents)",
+        if not has_enough_files:
+            st.markdown(
+                empty_state_html(
+                    "Waiting for Files",
+                    "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                    "📂",
+                ),
+                unsafe_allow_html=True,
             )
         else:
-            st.info("No plagiarism incidents recorded.")
+            if flags:
+                sync_flagged_incidents(flags)
+
+            st.subheader("📈 High Severity Plagiarism Trends (Last 30 Days)")
+            trend_data = get_high_severity_trends(days=30)
+            trend_fig = plot_high_severity_trends(trend_data)
+            st.plotly_chart(trend_fig, use_container_width=True)
+
+            st.divider()
+            st.subheader("🔝 Most Frequently Plagiarized Documents")
+            doc_data = get_most_plagiarized_documents(limit=10)
+            doc_fig = plot_most_plagiarized_documents(doc_data)
+            st.plotly_chart(doc_fig, use_container_width=True)
+
+            st.divider()
+
+            st.subheader("📊 Similarity Score Distribution")
+            analysis_results = st.session_state.get("analysis_results")
+            if analysis_results is not None:
+                sim_matrix = (
+                    analysis_results[4] if use_chunk_matrix else analysis_results[3]
+                )
+                dist_fig = plot_similarity_distribution(sim_matrix)
+                st.plotly_chart(dist_fig, use_container_width=True)
+            else:
+                st.info(
+                    "Run a plagiarism analysis to see the similarity score distribution."
+                )
+
+            st.divider()
+
+            # Summary statistics
+            st.subheader("📋 Analytics Summary")
+            if trend_data:
+                total_high_severity = sum(item["count"] for item in trend_data)
+                st.metric(
+                    "Total High Severity Incidents (30 days)", total_high_severity
+                )
+            else:
+                st.info("No high severity incidents recorded in the last 30 days.")
+
+            if doc_data:
+                st.metric(
+                    "Most Plagiarized Document",
+                    f"{doc_data[0]['document_name']} ({doc_data[0]['incident_count']} incidents)",
+                )
+            else:
+                st.info("No plagiarism incidents recorded.")
 
     # ══ TAB 7: User Management ═══════════════════════════════════════════════════
     with tab_users:
@@ -2773,6 +2623,175 @@ if encrypted_files_detected:
                             if "temp_2fa_secret" in st.session_state:
                                 del st.session_state.temp_2fa_secret
                             st.rerun()
+
+    # ══ TAB 8: Settings ══════════════════════════════════════════════════════════
+    with tab_settings:
+        st.markdown("🏠 Home > Dashboard > **Settings**")
+        st.subheader(get_text("settings", lang=lang_code))
+
+        selected_lang_name = st.selectbox(
+            "🌐 Language / Idioma",
+            options=list(_SUPPORTED_LANGUAGES.values()),
+            index=0,
+            key="lang_selector",
+        )
+        lang_code = "es" if selected_lang_name == "Español" else "en"
+
+        selected_theme = st.radio(
+            get_text("theme", lang=lang_code),
+            options=["Light", "Dark"],
+            index=0 if current_theme == "Light" else 1,
+            horizontal=True,
+            key="theme_selector",
+            on_change=save_preferences_callback,
+        )
+        if selected_theme != current_theme:
+            set_theme(selected_theme)
+            st.rerun()
+
+        if user_role == "admin":
+            st.markdown("---")
+            st.markdown("### ⚙️ Advanced Configuration")
+
+            threshold = st.slider(
+                get_text("threshold", lang=lang_code),
+                min_value=0.0,
+                max_value=1.0,
+                value=DEFAULT_THRESHOLDS.plagiarism,
+                step=0.01,
+                help=(
+                    "Controls which pairs are flagged. Severity remains Medium "
+                    f"at {DEFAULT_THRESHOLDS.medium:.0%} and High "
+                    f"at {DEFAULT_THRESHOLDS.high:.0%}."
+                ),
+                key="threshold_slider",
+                on_change=save_preferences_callback,
+            )
+            st.query_params["threshold"] = f"{threshold:.2f}"
+            st.session_state.last_seen_threshold_query = f"{threshold:.2f}"
+
+            selected_class = st.selectbox(
+                "Filter by Class Section",
+                options=unique_classes,
+                key="class_filter_selectbox",
+            )
+
+            use_chunk_matrix = st.checkbox(
+                "Use chunk-level similarity matrix",
+                value=False,
+                key="chunk_matrix_checkbox",
+            )
+
+            faiss_top_k = st.slider(
+                "FAISS: matches per chunk",
+                1,
+                20,
+                value=5,
+                key="faiss_top_k_slider",
+            )
+
+            with st.expander("✂️ Ignore Phrases", expanded=False):
+                st.caption(
+                    "Enter common template text or standard assignment questions to ignore during analysis. "
+                    "These phrases will be removed from documents before chunking and embedding."
+                )
+                ignore_phrases = st.text_area(
+                    "Ignore Phrases (one per line)",
+                    placeholder="Q1: Explain the theory of relativity\nQ2: Describe the process of photosynthesis",
+                    help="Each line represents a phrase to ignore.",
+                    key="ignore_phrases_textarea",
+                )
+
+            st.markdown("### ✂️ Chunking Settings")
+            chunk_size = st.slider(
+                "Chunk Size (characters)",
+                200,
+                2000,
+                value=500,
+                step=50,
+                help="Target character length for text chunks during embedding.",
+                key="chunk_size_slider",
+            )
+            chunk_overlap = st.slider(
+                "Chunk Overlap (characters)",
+                0,
+                500,
+                value=50,
+                step=10,
+                help="Character overlap between consecutive chunks to preserve contextual boundary.",
+                key="chunk_overlap_slider",
+            )
+
+            ocr_language = DEFAULT_OCR_LANGUAGE
+            ocr_dpi = DEFAULT_OCR_DPI
+
+            with st.expander("🔤 OCR Settings", expanded=False):
+                st.caption(
+                    "Used only for scanned or image-only PDF pages. Text-based PDFs continue to use native extraction."
+                )
+                ocr_language_labels = {
+                    display_name: code
+                    for code, display_name in SUPPORTED_OCR_LANGUAGES.items()
+                }
+                language_names = list(ocr_language_labels)
+                default_language_name = SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]
+
+                selected_ocr_language_name = st.selectbox(
+                    "OCR Language",
+                    options=language_names,
+                    index=language_names.index(default_language_name),
+                    key="ocr_language_selector",
+                )
+                ocr_language = ocr_language_labels[selected_ocr_language_name]
+
+                ocr_dpi = st.slider(
+                    "OCR DPI Resolution",
+                    min_value=150,
+                    max_value=400,
+                    value=DEFAULT_OCR_DPI,
+                    step=25,
+                    key="ocr_dpi_slider",
+                )
+
+            st.markdown("")
+            if st.button(
+                "🔄 Reset to Factory Defaults",
+                key="reset_defaults_button",
+                use_container_width=True,
+            ):
+                keys_to_reset = [
+                    "theme_selector",
+                    "threshold_slider",
+                    "class_filter_selectbox",
+                    "chunk_matrix_checkbox",
+                    "faiss_top_k_slider",
+                    "ignore_phrases_textarea",
+                    "chunk_size_slider",
+                    "chunk_overlap_slider",
+                    "ocr_language_selector",
+                    "ocr_dpi_slider",
+                ]
+                for key in keys_to_reset:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                if "threshold" in st.query_params:
+                    del st.query_params["threshold"]
+                set_theme("Light")
+                st.success("✅ Settings reset to defaults!")
+                st.rerun()
+
+            st.markdown("")
+            if st.button(
+                "🔍 Ping Redis", key="ping_redis_button", use_container_width=True
+            ):
+                from src.utils.redis_cache import get_cache
+
+                connected, latency = get_cache().ping()
+                if connected:
+                    st.success(f"✅ Connected ({latency} ms ping)")
+                else:
+                    st.error("🚨 Disconnected")
+                st.rerun()
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()

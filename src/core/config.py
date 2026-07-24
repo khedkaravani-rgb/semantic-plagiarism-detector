@@ -7,7 +7,6 @@ from math import isfinite
 from numbers import Real
 from typing import Final, Mapping
 
-
 LOW_SEVERITY: Final[str] = "Low"
 MEDIUM_SEVERITY: Final[str] = "Medium"
 HIGH_SEVERITY: Final[str] = "High"
@@ -59,8 +58,7 @@ def validate_thresholds(
 
     if not plagiarism <= medium <= high:
         raise ValueError(
-            "Thresholds must satisfy "
-            "0.0 <= plagiarism <= medium <= high <= 1.0."
+            "Thresholds must satisfy " "0.0 <= plagiarism <= medium <= high <= 1.0."
         )
     return thresholds
 

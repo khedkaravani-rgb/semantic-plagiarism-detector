@@ -77,7 +77,7 @@ def render_incident_export_panel(
     )
     if st.button("Save review status", type="primary"):
         update_review_status(incident_id, status, db_path)
-        st.success(f"{incident_id} marked as {status}.")
+        st.success(f"✅ {incident_id} marked as {status}.")
         st.rerun()
 
     filename = (

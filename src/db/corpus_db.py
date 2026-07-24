@@ -11,10 +11,7 @@ from datetime import datetime
 
 import numpy as np
 
-from src.db.migrations import (
-    delete_all_if_table_exists,
-    migrate_corpus_database,
-)
+from src.db.migrations import delete_all_if_table_exists, migrate_corpus_database
 
 _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "corpus.db")

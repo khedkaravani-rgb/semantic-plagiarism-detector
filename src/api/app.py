@@ -1,5 +1,6 @@
 """src/api/app.py - FastAPI REST API for LMS integration."""
 
+import logging
 import os
 from typing import Dict
 
@@ -17,10 +18,9 @@ from src.core.similarity import (
     find_most_similar_chunks,
 )
 from src.core.text_chunking import chunk_document
-from src.db.corpus_db import _connect, init_corpus_db, clear_all_data
 from src.db.auth import get_user_role
+from src.db.corpus_db import _connect, clear_all_data, init_corpus_db
 from src.utils.redis_cache import get_cache
-import logging
 
 # ── API Initialization ────────────────────────────────────────────────────────
 
@@ -262,7 +262,9 @@ INDEX_PATH = os.path.abspath(
 
 @app.post("/api/v1/clear", tags=["System Administration"])
 async def clear_all_documents(
-    username: str = Query(..., description="Username of the administrator executing the operation"),
+    username: str = Query(
+        ..., description="Username of the administrator executing the operation"
+    ),
     _token: str = Depends(verify_bearer_token),
 ):
     """
@@ -299,12 +301,12 @@ async def clear_all_documents(
 
         return {
             "status": "success",
-            "message": "All documents, chunks, and plagiarism incidents have been cleared, and the FAISS index reset successfully."
+            "message": "All documents, chunks, and plagiarism incidents have been cleared, and the FAISS index reset successfully.",
         }
 
     except Exception as e:
         logger.error(f"Error during bulk clearing: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while clearing the corpus: {str(e)}"
+            detail=f"An error occurred while clearing the corpus: {str(e)}",
         )

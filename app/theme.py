@@ -219,6 +219,21 @@ def inject_css() -> None:
             flex-shrink: 0;
         }}
 
+        /* ── Document row (sidebar) ─────────────────────────────────── */
+
+        .doc-row {{
+            border-radius: 8px;
+            padding: 4px 8px;
+            margin-bottom: 2px;
+            transition: background-color 0.18s ease, box-shadow 0.18s ease;
+            cursor: default;
+        }}
+
+        .doc-row:hover {{
+            background-color: var(--neutral-soft);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }}
+
         /* ── Metric cards ───────────────────────────────────────────── */
 
         div[data-testid="stMetric"] {{
@@ -558,6 +573,60 @@ def inject_css() -> None:
             50% {{ opacity: 0.7; }}
         }}
 
+        /* ── Back to Top Button ─────────────────────────────────────── */
+
+        #back-to-top-btn {{
+            position: fixed;
+            bottom: max(2rem, env(safe-area-inset-bottom, 2rem));
+            right: max(2rem, env(safe-area-inset-right, 2rem));
+            z-index: 9999;
+            background-color: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(12px);
+            transition: opacity 0.3s ease, visibility 0.3s ease,
+                        transform 0.3s ease, box-shadow 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+
+        #back-to-top-btn.visible {{
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }}
+
+        #back-to-top-btn:hover {{
+            filter: brightness(0.85);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+            transform: translateY(-2px);
+        }}
+
+        #back-to-top-btn:focus-visible {{
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }}
+
+        @media (prefers-reduced-motion: reduce) {{
+            #back-to-top-btn {{
+                transition: opacity 0.15s ease, visibility 0.15s ease;
+            }}
+
+            #back-to-top-btn.visible,
+            #back-to-top-btn:hover {{
+                transform: none;
+            }}
+        }}
+
         /* ── Responsive: mobile / tablet ────────────────────────────── */
 
         @media (max-width: 768px) {{
@@ -572,6 +641,14 @@ def inject_css() -> None:
 
             div[data-testid="stMetricValue"] > div {{
                 font-size: 1.3rem !important;
+            }}
+
+            /* Issue #258: when the sidebar is opened on a phone/small
+               tablet, keep it from covering the whole screen so the
+               similarity matrix / heatmap stay legible behind it. */
+            [data-testid="stSidebar"] {{
+                min-width: 85vw !important;
+                max-width: 85vw !important;
             }}
         }}
     </style>
@@ -708,3 +785,120 @@ def pipeline_progress_html(steps: list[str], active_index: int = -1) -> str:
             parts.append('<span class="pipeline-arrow">→</span>')
 
     return f'<div class="pipeline-steps">{"".join(parts)}</div>'
+
+
+def back_to_top_html() -> str:
+    """Return HTML and JavaScript for a floating back-to-top button.
+
+    The button is hidden by default and fades in once the user scrolls past
+    the configured threshold.  Clicking it smoothly scrolls the page to the top.
+
+    Streamlit (>= 1.28) scrolls inside a container whose parent holds
+    ``[data-testid="block-container"]``, not the window viewport.
+
+    The IIFE guards against duplicate listener registration across Streamlit
+    reruns.  The click handler uses event delegation and the scroll handler
+    re-queries the button on each event so that Streamlit reruns (which
+    recreate the DOM) do not break the feature.
+    """
+    return """
+    <button id="back-to-top-btn"
+            type="button"
+            aria-label="Back to top"
+            title="Back to top">
+        ⬆️ Top
+    </button>
+    <script>
+    (function () {
+        if (window.__backToTopInitialized) return;
+        window.__backToTopInitialized = true;
+
+        var SCROLL_THRESHOLD = 250;
+
+        /* Streamlit >= 1.28 scrolls inside the parent of
+           [data-testid="block-container"], not the window. */
+        var scrollContainer =
+            document.querySelector('[data-testid="block-container"]')
+                ?.parentElement
+            || document.querySelector('section.main > div')
+            || window;
+
+        /* Event delegation — works even after Streamlit recreates the
+           button element on a rerun. */
+        scrollContainer.addEventListener('click', function (e) {
+            if (e.target.closest('#back-to-top-btn')) {
+                scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        });
+
+        /* Re-query the button every scroll tick so the .visible class
+           is always applied to the live element, not a detached one. */
+        scrollContainer.addEventListener('scroll', function () {
+            var btn = document.getElementById('back-to-top-btn');
+            if (!btn) return;
+            var scrollTop = scrollContainer === window
+                ? window.scrollY
+                : scrollContainer.scrollTop;
+            btn.classList.toggle('visible', scrollTop > SCROLL_THRESHOLD);
+        }, { passive: true });
+    })();
+    </script>
+    """
+
+
+def version_check_widget_html(
+    local_version: str,
+    latest_tag: str,
+    repo_url: str = "https://github.com/Ganesh-403/semantic-plagiarism-detector/releases/latest",
+) -> str:
+    """Return an HTML snippet that renders an update-available notification banner.
+
+    The banner is intentionally lightweight — pure HTML/CSS with no external
+    dependencies — so it renders reliably inside ``st.markdown(...,
+    unsafe_allow_html=True)``.
+
+    Parameters
+    ----------
+    local_version:
+        The version string of the currently running application.
+    latest_tag:
+        The newer tag string returned by the GitHub API (e.g. ``"v1.2.0"``).
+    repo_url:
+        Link target for the "View release" call-to-action.
+
+    Returns
+    -------
+    str
+        A self-contained HTML string ready for ``st.markdown``.
+    """
+    colors = get_colors()
+    warning_color = colors["warning"]
+    warning_soft = colors["warning_soft"]
+    ink = colors["ink"]
+
+    return f"""
+<div id="spd-update-banner" style="
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    margin-top: 8px;
+    background: {warning_soft};
+    border: 1px solid {warning_color};
+    border-radius: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    color: {ink};
+">
+    <span style="font-size: 1.1rem;">🔔</span>
+    <span>
+        <strong>Update available:</strong>
+        v{local_version} &rarr; <strong>{latest_tag}</strong>.
+        &nbsp;
+        <a href="{repo_url}" target="_blank" rel="noopener noreferrer"
+           style="color: {warning_color}; font-weight: 600; text-decoration: underline;">
+            View release &rarr;
+        </a>
+    </span>
+</div>
+"""

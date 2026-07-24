@@ -7,6 +7,7 @@ Utility for exporting similarity matrices into a clean JSON format.
 import json
 import math
 from typing import Dict, List, Union
+
 import pandas as pd
 
 
@@ -48,10 +49,12 @@ def export_similarity_matrix_to_json(df: Union[pd.DataFrame, None]) -> str:
             else:
                 score_val = round(float(score), 4)
 
-            pairs.append({
-                "document_1": str(doc_names[i]),
-                "document_2": str(doc_names[j]),
-                "similarity_score": score_val
-            })
+            pairs.append(
+                {
+                    "document_1": str(doc_names[i]),
+                    "document_2": str(doc_names[j]),
+                    "similarity_score": score_val,
+                }
+            )
 
     return json.dumps(pairs, indent=2, ensure_ascii=False)

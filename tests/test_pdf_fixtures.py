@@ -1,12 +1,14 @@
 from pathlib import Path
+
 from fastapi.testclient import TestClient
 
-from src.core.document_parser import extract_text
 from src.api.app import app, get_expected_bearer_token
+from src.core.document_parser import extract_text
 
 client = TestClient(app)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
 
 def test_clean_pdf_extraction():
     """Verify that a standard clean PDF has its text extracted successfully."""
@@ -17,6 +19,7 @@ def test_clean_pdf_extraction():
     assert "Artificial Intelligence" in text
     assert "clean PDF" in text
 
+
 def test_encrypted_pdf_extraction():
     """Verify that an encrypted PDF is handled gracefully (returns empty text)."""
     encrypted_pdf_path = FIXTURES_DIR / "encrypted.pdf"
@@ -26,16 +29,19 @@ def test_encrypted_pdf_extraction():
     # Current behavior catches PyMuPDF errors and returns empty string
     assert text == ""
 
+
 def test_scanned_pdf_extraction():
     """Verify that a scanned PDF triggers OCR and extracts text successfully (or fails if Tesseract missing)."""
     scanned_pdf_path = FIXTURES_DIR / "scanned.pdf"
     assert scanned_pdf_path.exists(), "scanned.pdf fixture is missing"
 
     import shutil
+
     from src.core.document_parser import OCRDependencyError
-    
+
     if not shutil.which("tesseract"):
         import pytest
+
         with pytest.raises(OCRDependencyError):
             extract_text(scanned_pdf_path.read_bytes(), "scanned.pdf")
     else:
@@ -43,6 +49,7 @@ def test_scanned_pdf_extraction():
         # The OCR should pick up the text rendered into the image
         assert "Artificial Intelligence" in text
         assert "scanned text" in text
+
 
 def test_api_upload_clean_pdf():
     """Verify that the API processes the clean PDF correctly."""
@@ -61,6 +68,7 @@ def test_api_upload_clean_pdf():
     data = response.json()
     assert data["filename"] == "clean.pdf"
     assert data["chunk_count"] >= 1
+
 
 def test_api_upload_encrypted_pdf():
     """Verify that the API handles encrypted PDFs properly."""

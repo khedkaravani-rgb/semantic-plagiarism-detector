@@ -19,6 +19,7 @@ from src.db.auth import (
 @pytest.fixture(autouse=True)
 def setup_test_db(mock_db):
     """Uses the mock_db fixture from conftest.py to isolate DB operations."""
+    init_db()
     yield
 
 

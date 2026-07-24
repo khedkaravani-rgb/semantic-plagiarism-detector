@@ -1038,7 +1038,7 @@ else:
     def load_analysis_results_from_db():
         import numpy as np
         import pandas as pd
-from src.security.metadata_stripper import strip_exif_metadata
+        from src.security.metadata_stripper import strip_exif_metadata
         from sklearn.metrics.pairwise import cosine_similarity
 
         from src.db.corpus_db import get_all_documents, get_chunk_registry
@@ -1648,6 +1648,7 @@ from src.security.metadata_stripper import strip_exif_metadata
     if (len(file_bytes_dict) > 0 and any(file_bytes_dict.values())) or url_text:
         try:
             with st.spinner("🧠 Processing files and building embeddings…"):
+                start_time = time.time()
                 analysis_results = run_pipeline(
                     file_bytes_dict=file_bytes_dict,
                     ocr_language=ocr_language,
@@ -1657,6 +1658,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                     url_text=url_text,
                     url_filename=url_filename,
                 )
+                elapsed_time = time.time() - start_time
                 (
                     raw_texts,
                     chunked_docs,
@@ -1668,6 +1670,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                     ai_probabilities,
                 ) = analysis_results
                 st.session_state.analysis_results = analysis_results
+                st.toast(f"Successfully processed in {elapsed_time:.2f} seconds 🚀")
         except OCRFileBatchError as exc:
             from src.errors import OCR_DEPENDENCIES_MISSING
 

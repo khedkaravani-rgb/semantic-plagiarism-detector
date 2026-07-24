@@ -81,9 +81,15 @@ class RedisCache:
             # Test connection
             self._client.ping()
             print(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-        except (AttributeError, redis.ConnectionError, redis.TimeoutError, ConnectionRefusedError) as e:
+        except (
+            AttributeError,
+            redis.ConnectionError,
+            redis.TimeoutError,
+            ConnectionRefusedError,
+        ) as e:
             print(f"[RedisCache] Redis connection failed: {e}. Running without cache.")
             logger.info(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            self._client = None
         except (AttributeError, redis.ConnectionError, redis.TimeoutError) as e:
             logger.warning(
                 f"[RedisCache] Redis connection failed: {e}. Running without cache."
@@ -133,6 +139,7 @@ class RedisCache:
             return True
         except (RedisError, pickle.PickleError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error setting key {key}: {e}")
+            return False
         except (RedisError, pickle.PickleError) as e:
             logger.error(f"[RedisCache] Error setting key {key}: {e}")
             return False
@@ -149,6 +156,7 @@ class RedisCache:
             return pickle.loads(data)
         except (RedisError, pickle.PickleError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error getting key {key}: {e}")
+            return None
         except (RedisError, pickle.PickleError) as e:
             logger.error(f"[RedisCache] Error getting key {key}: {e}")
             return None
@@ -163,6 +171,7 @@ class RedisCache:
             return True
         except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error deleting key {key}: {e}")
+            return False
         except RedisError as e:
             logger.error(f"[RedisCache] Error deleting key {key}: {e}")
             return False
@@ -181,6 +190,7 @@ class RedisCache:
             return True
         except (RedisError, json.JSONDecodeError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error setting JSON key {key}: {e}")
+            return False
         except (RedisError, json.JSONDecodeError) as e:
             logger.error(f"[RedisCache] Error setting JSON key {key}: {e}")
             return False
@@ -197,6 +207,7 @@ class RedisCache:
             return json.loads(data)
         except (RedisError, json.JSONDecodeError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error getting JSON key {key}: {e}")
+            return None
         except (RedisError, json.JSONDecodeError) as e:
             logger.error(f"[RedisCache] Error getting JSON key {key}: {e}")
             return None
@@ -210,6 +221,7 @@ class RedisCache:
             return bool(self._client.exists(key))
         except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error checking key {key}: {e}")
+            return False
         except RedisError as e:
             logger.error(f"[RedisCache] Error checking key {key}: {e}")
             return False
@@ -226,6 +238,7 @@ class RedisCache:
             return 0
         except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error clearing pattern {pattern}: {e}")
+            return 0
         except RedisError as e:
             logger.error(f"[RedisCache] Error clearing pattern {pattern}: {e}")
             return 0

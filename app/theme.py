@@ -44,25 +44,41 @@ COLORS = THEMES["Light"]
 
 def initialize_theme() -> None:
     """Initialize the active theme for the current session."""
-    if "theme" not in st.session_state:
-        st.session_state.theme = "Light"
+    try:
+        if "theme" not in st.session_state:
+            st.session_state.theme = "Light"
+        if "theme_colors" not in st.session_state:
+            st.session_state.theme_colors = THEMES[st.session_state.theme]
+    except Exception:
+        pass
 
 
 def get_theme_name() -> str:
     """Return the active theme name."""
     initialize_theme()
-    return st.session_state.theme
+    try:
+        return st.session_state.theme
+    except Exception:
+        return "Light"
 
 
 def set_theme(theme_name: str) -> None:
     """Set the active theme."""
     if theme_name in THEMES:
-        st.session_state.theme = theme_name
+        try:
+            st.session_state.theme = theme_name
+            st.session_state.theme_colors = THEMES[theme_name]
+        except Exception:
+            pass
 
 
 def get_colors() -> dict:
     """Return the colors for the active theme."""
-    return THEMES[get_theme_name()]
+    initialize_theme()
+    try:
+        return st.session_state.theme_colors
+    except Exception:
+        return THEMES["Light"]
 
 
 def inject_css() -> None:

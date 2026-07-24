@@ -11,6 +11,9 @@ import io as _io
 import os
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -25,6 +28,10 @@ try:
     from streamlit_plotly_events import plotly_events
 except ImportError:  # pragma: no cover - optional dependency
     plotly_events = None
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -202,6 +209,35 @@ if last_interaction and st.session_state.get("authenticated", False):
         st.session_state.last_interaction = time.time()
         cache_session_state(SESSION_ID, "last_interaction", time.time())
 
+# ── Handle OAuth Callback (GitHub / Google SSO) ──────────────────────────────
+if not st.session_state.get("authenticated", False):
+    if "code" in st.query_params and "state" in st.query_params:
+        _code = st.query_params["code"]
+        _state = st.query_params["state"]
+        from src.utils.sso import exchange_google_code, exchange_github_code
+        from src.db.auth import get_or_create_sso_user
+        _user_info = None
+        if _state.startswith("google_"):
+            _user_info = exchange_google_code(_code)
+        elif _state.startswith("github_"):
+            _user_info = exchange_github_code(_code)
+        if _user_info and _user_info.get("email"):
+            _email = _user_info["email"]
+            _role = get_or_create_sso_user(_email)
+            st.session_state.authenticated = True
+            st.session_state.username = _email
+            st.session_state.role = _role
+            st.session_state.last_interaction = time.time()
+            cache_session_state(SESSION_ID, "authenticated", True)
+            cache_session_state(SESSION_ID, "username", _email)
+            cache_session_state(SESSION_ID, "role", _role)
+            cache_session_state(SESSION_ID, "last_interaction", time.time())
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.error("🚨 SSO authentication failed. Could not retrieve your email.")
+            st.query_params.clear()
+
 # Render Login UI if not authenticated
 if not st.session_state.get("authenticated", False):
     if st.session_state.get("pending_2fa", False):
@@ -303,6 +339,7 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
+                            st.success(f"Welcome back, {role.capitalize()}!")
                             st.success(f"✅ Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
@@ -310,6 +347,23 @@ if not st.session_state.get("authenticated", False):
                     record_failed_login(username)
                     from src.errors import AUTH_INVALID_CREDENTIALS
                     st.error(f"🚨 {AUTH_INVALID_CREDENTIALS}")
+
+    # ── SSO Sign-In Options ──────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("<p style='text-align:center;color:#888;font-size:0.85rem;'>or sign in with</p>", unsafe_allow_html=True)
+    _sso_col1, _sso_col2 = st.columns(2)
+    with _sso_col1:
+        if st.button("🐙 Sign in with GitHub", use_container_width=True, key="github_sso_btn"):
+            from src.utils.sso import get_github_auth_url
+            _github_url, _github_state = get_github_auth_url()
+            st.session_state["sso_state"] = _github_state
+            st.markdown(f"<meta http-equiv='refresh' content='0; url={_github_url}'>", unsafe_allow_html=True)
+    with _sso_col2:
+        if st.button("🔵 Sign in with Google", use_container_width=True, key="google_sso_btn"):
+            from src.utils.sso import get_google_auth_url
+            _google_url, _google_state = get_google_auth_url()
+            st.session_state["sso_state"] = _google_state
+            st.markdown(f"<meta http-equiv='refresh' content='0; url={_google_url}'>", unsafe_allow_html=True)
     st.stop()
 
 # Active user role
@@ -365,6 +419,8 @@ def clear_all_dialog():
                     os.remove(_INDEX_PATH)
                 except OSError as e:
                     print(f"Error removing FAISS index: {e}")
+                except Exception as e:
+                    logger.error(f"Error removing FAISS index: {e}")
 
             try:
                 from src.utils.redis_cache import get_cache
@@ -374,6 +430,8 @@ def clear_all_dialog():
                     cache.clear_pattern("analysis:*")
             except (ImportError, RuntimeError, ConnectionError) as e:
                 print(f"Error invalidating cache: {e}")
+            except Exception as e:
+                logger.error(f"Error invalidating cache: {e}")
 
             if "analysis_results" in st.session_state:
                 st.session_state.analysis_results = None
@@ -410,6 +468,22 @@ def save_preferences_callback():
     update_user_preferences(st.session_state.username, prefs)
 
 with st.sidebar:
+    st.markdown(f"👤 Logged in as **{st.session_state.get('username', '')}**")
+    if st.button("🚪 Log Out", use_container_width=True):
+        import logging
+        from datetime import datetime, timezone
+        logger = logging.getLogger(__name__)
+        username = st.session_state.get("username", "unknown")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        logger.info("User '%s' logged out at %s", username, timestamp)
+        
+        for key in ["authenticated", "username", "role"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        clear_session(SESSION_ID)
+        st.rerun()
+    st.markdown("---")
+
     selected_lang_name = st.selectbox(
         "🌐 Language / Idioma",
         options=list(_SUPPORTED_LANGUAGES.values()),
@@ -799,6 +873,8 @@ else:
             st.info(f"📂 Loaded FAISS index from Redis cache with {faiss_index.ntotal} vectors")
         except (RuntimeError, ValueError, OSError) as e:
             print(f"[Redis] Error loading cached index: {e}, falling back to disk")
+        except Exception as e:
+            logger.warning(f"[Redis] Error loading cached index: {e}, falling back to disk")
 
     if faiss_index is None:
         try:
@@ -894,6 +970,8 @@ else:
             )
         except (RuntimeError, ValueError, OSError, TypeError, KeyError) as err:
             print(f"Error rebuilding analysis results from DB: {err}")
+        except Exception as err:
+            logger.error(f"Error rebuilding analysis results from DB: {err}")
             return None
 
     if (
@@ -914,6 +992,7 @@ else:
             st.session_state.analysis_file_signature = cached_signature
 
 
+    # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
         get_text("upload_title", lang=lang_code),
@@ -1393,7 +1472,7 @@ else:
 
 
     active_sim_df = chunk_sim_df if use_chunk_matrix else sim_df
-    flags = flag_plagiarism(active_sim_df, threshold=threshold)
+    flags = flag_plagiarism(active_sim_df, threshold=threshold, chunked_docs=chunked_docs,embeddings=embeddings)
 
     # Network Graph Node Click Filtering setup
     selected_document_id = st.session_state.get("selected_document_id")
@@ -1473,6 +1552,7 @@ else:
 
     # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
     with tab_warnings:
+        st.markdown("🏠 Home > Dashboard > **Warnings**")
         st.subheader(get_text("tab_warnings", lang=lang_code))
 
         if selected_document_id:
@@ -1487,6 +1567,7 @@ else:
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
+        st.markdown("🏠 Home > Dashboard > **FAISS Chunk Search**")
         st.subheader("⚡ FAISS Chunk Search")
         st.info(f"Index total: {faiss_index.ntotal if faiss_index else 0} vectors.")
         faiss_query = st.text_input("Query FAISS Index:", placeholder="Type a text snippet to search vector index...", key="faiss_query_input")
@@ -1503,6 +1584,7 @@ else:
 
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
+        st.markdown("🏠 Home > Dashboard > **Similarity Matrix**")
         st.subheader("📋 Similarity Matrix")
         if active_sim_df is None:
             st.info("Please upload documents to generate a similarity matrix.")
@@ -1530,6 +1612,7 @@ else:
 
     # ══ TAB 4: HEATMAP & NETWORK ══════════════════════════════════════════════
     with tab_heatmap:
+        st.markdown("🏠 Home > Dashboard > **Heatmap & Network**")
         st.subheader(get_text("tab_heatmap", lang=lang_code))
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
@@ -1572,6 +1655,7 @@ else:
                 title="Interactive Document Plagiarism Network",
             )
 
+            if plotly_events is not None:
             if plotly_events:
                 selected_points = plotly_events(
                         network_fig,
@@ -1579,6 +1663,66 @@ else:
                         hover_event=False,
                         select_event=False,
                         key="plagiarism_network",
+                )
+
+                if selected_points:
+                   clicked_point = selected_points[0]
+
+                   point_index = clicked_point.get("pointIndex")
+
+                   if point_index is not None and 0 <= point_index < len(doc_names):
+                        clicked_document_id = doc_names[point_index]
+
+                        st.session_state.selected_document_id = clicked_document_id
+            else:
+                st.plotly_chart(network_fig, use_container_width=True)
+
+                   
+            selected_document_id = st.session_state.get(
+                "selected_document_id"
+     )
+
+
+            if selected_document_id:
+                filtered_flags = [
+                    flag
+                    for flag in flags
+                        if (
+                            flag["doc_a"] == selected_document_id
+                            or flag["doc_b"] == selected_document_id
+                        )
+                ]
+            else:
+                filtered_flags=flags
+
+          
+
+
+   # ── Summary Metrics ───────────────────────────────────────────────────────────
+
+    if len(file_bytes_dict) < 2:
+        st.markdown(
+            empty_state_html(
+                "Waiting for Files",
+                "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                "📂",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
+    if "sent_alerts" not in st.session_state:
+        st.session_state.sent_alerts = set()
+
+
+    for flag in filtered_flags:
+        alert_key = (flag["doc_a"], flag["doc_b"])
+        if alert_key not in st.session_state.sent_alerts:
+            try:
+                send_plagiarism_alert(
+                    doc_a=flag["doc_a"],
+                    doc_b=flag["doc_b"],
+                    similarity=float(flag["similarity"]),
                 )
 
                 if selected_points:
@@ -1596,6 +1740,7 @@ else:
 
     # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
     with tab_drill:
+        st.markdown("🏠 Home > Dashboard > **Pair Drill-Down**")
         st.subheader("🔬 Pair Drill-Down")
         st.caption("Inspect chunk-level similarity between any two documents.")
 
@@ -1673,6 +1818,7 @@ else:
 
     # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
     with tab_analytics:
+        st.markdown("🏠 Home > Dashboard > **Analytics Dashboard**")
         st.subheader("📊 Plagiarism Analytics Dashboard")
         if flags:
             sync_flagged_incidents(flags)
@@ -1708,6 +1854,7 @@ else:
 
     # ══ TAB 7: User Management ═══════════════════════════════════════════════════
     with tab_users:
+        st.markdown("🏠 Home > Dashboard > **User Management**")
         st.subheader("👥 User Management")
         users = get_all_users()
         if users:

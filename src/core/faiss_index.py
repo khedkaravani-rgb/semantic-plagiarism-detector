@@ -22,7 +22,10 @@ inner product == cosine similarity.
 # FAISS has no official type stubs; suppress Pylance false positives
 import faiss  # type: ignore
 import numpy as np
+import logging
 from typing import Dict, List, Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 # ── Threshold for automatic index selection ────────────────────────────────────
 _IVF_THRESHOLD = 5_000   # Switch from flat to IVF when vectors exceed this
@@ -99,13 +102,13 @@ def build_index(
         index.train(matrix)          # type: ignore[arg-type]
         index.add(matrix)            # type: ignore[arg-type]
         index.nprobe = nprobe
-        print(f"[faiss_index] Built IndexIVFFlat  "
+        logger.info(f"[faiss_index] Built IndexIVFFlat  "
               f"({n_vectors} vectors, nlist={nlist}, nprobe={nprobe})")
     else:
         # Flat index — exact search, best for small-to-medium collections
         index = faiss.IndexFlatIP(dim)
         index.add(matrix)            # type: ignore[arg-type]
-        print(f"[faiss_index] Built IndexFlatIP  ({n_vectors} vectors, exact search)")
+        logger.info(f"[faiss_index] Built IndexFlatIP  ({n_vectors} vectors, exact search)")
 
     return index, registry
 
@@ -210,13 +213,13 @@ def find_plagiarised_chunks(
 def save_index(index: faiss.Index, path: str) -> None:
     """Persist a FAISS index to disk."""
     faiss.write_index(index, path)
-    print(f"[faiss_index] Index saved → {path}  ({index.ntotal} vectors)")
+    logger.info(f"[faiss_index] Index saved → {path}  ({index.ntotal} vectors)")
 
 
 def load_index(path: str) -> faiss.Index:
     """Load a FAISS index from disk."""
     index = faiss.read_index(path)
-    print(f"[faiss_index] Index loaded ← {path}  ({index.ntotal} vectors)")
+    logger.info(f"[faiss_index] Index loaded ← {path}  ({index.ntotal} vectors)")
     return index
 
 

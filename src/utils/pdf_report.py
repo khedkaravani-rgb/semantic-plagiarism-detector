@@ -23,7 +23,11 @@ from reportlab.lib.utils import ImageReader
 from io import BytesIO
 from typing import List, Optional, Tuple
 from datetime import datetime
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+    _HAS_FITZ = True
+except Exception:
+    _HAS_FITZ = False
 
 
 def get_similarity_color(score: float) -> HexColor:
@@ -63,16 +67,33 @@ def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
         pdf_bytes = pdf_buffer.getvalue()
 
         # 1. Try PyMuPDF (fitz) which is very powerful for garbage collection and stream compression
-        try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            # garbage=4 performs maximum cleanup including duplicate merging
-            compressed_bytes = doc.tobytes(garbage=4, deflate=True)
-            doc.close()
-            return BytesIO(compressed_bytes)
-        except Exception:
-            # Fallback to pypdf if PyMuPDF fails
+        if _HAS_FITZ:
             try:
-                from pypdf import PdfReader, PdfWriter
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                # garbage=4 performs maximum cleanup including duplicate merging
+                compressed_bytes = doc.tobytes(garbage=4, deflate=True)
+                doc.close()
+                return BytesIO(compressed_bytes)
+            except Exception:
+                pass
+                
+        # Fallback to pypdf if PyMuPDF fails or is unavailable
+        try:
+            from pypdf import PdfReader, PdfWriter
+
+            reader = PdfReader(BytesIO(pdf_bytes))
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            for page in writer.pages:
+                page.compress_content_streams()
+            out_buf = BytesIO()
+            writer.write(out_buf)
+            out_buf.seek(0)
+            return out_buf
+        except ImportError:
+            try:
+                from PyPDF2 import PdfReader, PdfWriter
 
                 reader = PdfReader(BytesIO(pdf_bytes))
                 writer = PdfWriter()
@@ -85,21 +106,7 @@ def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
                 out_buf.seek(0)
                 return out_buf
             except ImportError:
-                try:
-                    from PyPDF2 import PdfReader, PdfWriter
-
-                    reader = PdfReader(BytesIO(pdf_bytes))
-                    writer = PdfWriter()
-                    for page in reader.pages:
-                        writer.add_page(page)
-                    for page in writer.pages:
-                        page.compress_content_streams()
-                    out_buf = BytesIO()
-                    writer.write(out_buf)
-                    out_buf.seek(0)
-                    return out_buf
-                except ImportError:
-                    pass
+                pass
 
         # If all compression attempts fail, return the original buffer
         pdf_buffer.seek(original_pos)
@@ -394,6 +401,13 @@ def highlight_pdf_matches(
     Returns:
         bytes: Binary PDF data with highlighted matches
     """
+    if not _HAS_FITZ:
+        print("[pdf_report] Warning: PyMuPDF is unavailable, skipping PDF highlights.")
+        if isinstance(pdf_source, bytes):
+            return pdf_source
+        with open(pdf_source, "rb") as f:
+            return f.read()
+
     if isinstance(pdf_source, bytes):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
     else:

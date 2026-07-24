@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.core.lexical_similarity import lexical_similarity_matrix
+from src.core.lexical_similarity import (  # noqa: E402
+    STOPWORDS,
+    jaccard_similarity,
+    lexical_similarity_matrix,
+    remove_stopwords,
+    tokenize,
+)
 from src.core.similarity import (
     chunk_max_similarity,
     chunk_similarity_matrix,
@@ -10,13 +16,6 @@ from src.core.similarity import (
     find_most_similar_chunks,
     flag_plagiarism,
     hybrid_similarity_matrix,
-)
-
-from src.core.lexical_similarity import (  # noqa: E402
-    STOPWORDS,
-    jaccard_similarity,
-    remove_stopwords,
-    tokenize,
 )
 
 
@@ -368,6 +367,7 @@ def test_hybrid_similarity_matrix_index_mismatch():
         match="Semantic and lexical matrices must have the same index and columns",
     ):
         hybrid_similarity_matrix(semantic_df, lexical_df)
+
 
 # ── Stop-word filtering (issue #222) ──────────────────────────────────────────
 # Common function words (the, and, is, …) must not inflate lexical similarity.

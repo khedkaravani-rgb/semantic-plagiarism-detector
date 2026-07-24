@@ -33,11 +33,11 @@ _ESSAY_TOPICS = [
 ]
 
 _TOPIC_TITLES = {
-    "climate_change":       "The Impact of Climate Change on Global Ecosystems",
+    "climate_change": "The Impact of Climate Change on Global Ecosystems",
     "artificial_intelligence": "Artificial Intelligence: Transforming the Modern World",
-    "social_media":         "Social Media and Its Effects on Mental Health",
-    "space_exploration":    "The Future of Human Space Exploration",
-    "genetic_engineering":  "Ethical Implications of Genetic Engineering",
+    "social_media": "Social Media and Its Effects on Mental Health",
+    "space_exploration": "The Future of Human Space Exploration",
+    "genetic_engineering": "Ethical Implications of Genetic Engineering",
 }
 
 
@@ -134,7 +134,6 @@ def generate_mock_data(
     Raises:
         ImportError: If ``faker`` is not installed.
     """
-    import os
 
     import numpy as np
 
@@ -195,13 +194,9 @@ def generate_mock_data(
             current_count = _get_current_vector_count()
 
             chunk_rows = []
-            for chunk_idx, (chunk_text, vec) in enumerate(
-                zip(chunks, emb_array)
-            ):
+            for chunk_idx, (chunk_text, vec) in enumerate(zip(chunks, emb_array)):
                 vector_id = current_count + len(chunk_rows)
-                chunk_rows.append(
-                    (vector_id, doc_name, chunk_idx, chunk_text, vec)
-                )
+                chunk_rows.append((vector_id, doc_name, chunk_idx, chunk_text, vec))
 
             if chunk_rows:
                 add_chunks(chunk_rows)
@@ -219,9 +214,7 @@ def generate_mock_data(
         embeddings_for_index: Dict[str, np.ndarray] = {}
 
         for record in registry:
-            chunked_for_index.setdefault(record.doc_name, []).append(
-                record.chunk_text
-            )
+            chunked_for_index.setdefault(record.doc_name, []).append(record.chunk_text)
 
         start = 0
         for doc_name, chunks in chunked_for_index.items():
@@ -258,7 +251,5 @@ def _get_index_path() -> str:
     import os
 
     # Walk up from this file: src/utils/mock_data.py → project root
-    project_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     return os.path.join(project_root, "corpus.index")

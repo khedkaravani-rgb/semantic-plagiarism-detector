@@ -100,7 +100,9 @@ async def fetch_latest_github_version(
             data = response.json()
             tag: Optional[str] = data.get("tag_name")
             if not tag:
-                logger.debug("GitHub releases API response missing 'tag_name': %s", data)
+                logger.debug(
+                    "GitHub releases API response missing 'tag_name': %s", data
+                )
             return tag
     except Exception as exc:  # noqa: BLE001 – network errors are non-fatal
         logger.debug("Version check request failed: %s", exc)

@@ -4,11 +4,14 @@ src/core/ai_detector.py
 AI content detection module using transformer models.
 """
 
+import logging
 import os
 from typing import Any, Dict, List
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 _model = None
 _tokenizer = None
@@ -27,23 +30,18 @@ def _get_model_and_tokenizer():
 
     if _model is None or _tokenizer is None:
         model_name = _get_model_name()
-        print(f"[ai_detector] Loading model: {model_name} …")
+        logger.info(f"[ai_detector] Loading model: {model_name} …")
 
         try:
-            from transformers import (
-                AutoModelForSequenceClassification,
-                AutoTokenizer,
-            )
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             _tokenizer = AutoTokenizer.from_pretrained(model_name)
-            _model = AutoModelForSequenceClassification.from_pretrained(
-                model_name
-            )
+            _model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-            print("[ai_detector] Model loaded successfully.")
+            logger.info("[ai_detector] Model loaded successfully.")
 
         except Exception as err:
-            print(
+            logger.warning(
                 "[ai_detector] Warning: Could not load transformer model "
                 f"({err}). Using fallback mode."
             )
@@ -133,7 +131,7 @@ def detect_ai_probability_batch(
                 probabilities[index] = float(probability)
 
         except Exception as err:
-            print(
+            logger.warning(
                 f"[ai_detector] Warning: Failed to process batch "
                 f"starting at index {i}: {err}"
             )
@@ -161,6 +159,7 @@ def detect_ai_probability(text: str) -> float:
 
 
 def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
+    """Calculates AI generated text statistics for a single document's chunks."""
     """
     Calculate AI-generated text statistics for a single document's chunks.
 
@@ -181,16 +180,8 @@ def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
     chunk_scores = detect_ai_probability_batch(chunks)
 
     return {
-        "overall": (
-            float(np.mean(chunk_scores))
-            if chunk_scores
-            else 0.0
-        ),
-        "max": (
-            float(np.max(chunk_scores))
-            if chunk_scores
-            else 0.0
-        ),
+        "overall": (float(np.mean(chunk_scores)) if chunk_scores else 0.0),
+        "max": (float(np.max(chunk_scores)) if chunk_scores else 0.0),
         "chunk_scores": chunk_scores,
     }
 

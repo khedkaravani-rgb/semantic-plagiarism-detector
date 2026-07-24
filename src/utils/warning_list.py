@@ -5,12 +5,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
-from src.db.incidents import get_false_positives, add_false_positive, _normalise_pair
+
 import pandas as pd
 import streamlit as st
 
 from app.theme import badge_html, tier_from_severity_label
 from src.core.config import normalize_severity_label, severity_from_score, severity_rank
+from src.db.incidents import _normalise_pair, add_false_positive, get_false_positives
 
 SORT_FIELDS = {
     "Similarity": "similarity",
@@ -185,8 +186,9 @@ def render_warning_controls(
     st.caption(f"Pairs with similarity ≥ **{threshold:.2f}**")
     dismissed_pairs = get_false_positives()
     filtered_flags = [
-        f for f in flags 
-        if _normalise_pair(f['doc_a'], f['doc_b']) not in dismissed_pairs
+        f
+        for f in flags
+        if _normalise_pair(f["doc_a"], f["doc_b"]) not in dismissed_pairs
     ]
 
     if not filtered_flags:
@@ -253,13 +255,12 @@ def render_warning_controls(
         )
 
     # Hide low severity warnings when checkbox is enabled
-    display_flags = [_normalise_warning(flag) for flag in flags]
+    display_flags = [_normalise_warning(flag) for flag in filtered_flags]
 
     if hide_low_severity:
         display_flags = [flag for flag in display_flags if flag["severity"] != "Low"]
 
     sorted_flags, current_page = prepare_warning_page(
-        filtered_flags,
         display_flags,
         search_query=search_query,
         primary_field=SORT_FIELDS[primary_label],
@@ -298,9 +299,10 @@ def render_warning_controls(
             "The following document pairs have been flagged for high or medium similarity:\n",
         ]
         for idx, flag in enumerate(summary_flags, 1):
+            matched_words = flag.get("matched_length", 0)
             markdown_lines.append(
                 f"{idx}. **{flag['doc_a']}** ↔ **{flag['doc_b']}** — "
-                f"**Similarity:** `{flag['similarity'] * 100:.1f}%` | "
+                f"**Similarity:** `{flag['similarity'] * 100:.1f}%` ({matched_words} words matched) | "
                 f"**Severity:** `{flag['severity']}`"
             )
         markdown_text = "\n".join(markdown_lines)
@@ -408,9 +410,13 @@ def render_warning_controls(
                     )
                 else:
                     st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
+
+                # Replaced the standard similarity text with your matched length display logic
+                matched_words = flag.get("matched_length", 0)
+                display_text = f"[{flag['similarity'] * 100:.1f}% Similarity | {matched_words} words matched]"
                 st.progress(
                     min(1.0, max(0.0, float(flag["similarity"]))),
-                    text=f"Similarity: {flag['similarity'] * 100:.1f}%",
+                    text=display_text,
                 )
 
                 # Display AI probabilities if available
@@ -429,12 +435,11 @@ def render_warning_controls(
                 )
             with c3:
                 if st.button("Dismiss", key=f"dismiss_{flag['doc_a']}_{flag['doc_b']}"):
-                    add_false_positive(flag['doc_a'], flag['doc_b'])
+                    add_false_positive(flag["doc_a"], flag["doc_b"])
                     st.rerun()
 
     if current_page.total_items == 0:
         return
-
     prev_col, page_col, next_col = st.columns([1, 2, 1])
 
     with prev_col:

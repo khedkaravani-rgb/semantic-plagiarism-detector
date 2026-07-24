@@ -22,13 +22,13 @@ from src.core.config import (
     severity_from_score,
 )
 
-
 # ── Validation helpers ─────────────────────────────────────────────────────────
 
 
 def _validated_batch_size(batch_size: Optional[int]) -> Optional[int]:
     """Return a safe integer batch size or None for unbatched execution."""
     from src.errors import SIM_BATCH_SIZE_INVALID
+
     if batch_size is None:
         return None
     if isinstance(batch_size, bool):
@@ -119,14 +119,19 @@ def hybrid_similarity_matrix(
     """
     if not (0.0 <= w <= 1.0):
         from src.errors import SIM_WEIGHT_OUT_OF_RANGE
+
         raise ValueError(SIM_WEIGHT_OUT_OF_RANGE.format(w=w))
 
     # Ensure both DataFrames have the same shape and index/columns
     if semantic_df.shape != lexical_df.shape:
         from src.errors import SIM_SHAPE_MISMATCH
+
         raise ValueError(SIM_SHAPE_MISMATCH)
-    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(lexical_df.columns):
+    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(
+        lexical_df.columns
+    ):
         from src.errors import SIM_INDEX_MISMATCH
+
         raise ValueError(SIM_INDEX_MISMATCH)
 
     hybrid_df = w * semantic_df + (1 - w) * lexical_df
@@ -222,7 +227,9 @@ def chunk_similarity_matrix(
 def flag_plagiarism(
     similarity_df: pd.DataFrame,
     threshold: float = PLAGIARISM_THRESHOLD,
-) -> List[Dict]:
+    chunked_docs: dict = None,
+    embeddings: dict = None,
+):
     """Identify document pairs whose similarity reaches the threshold.
 
     Flagging uses the configurable plagiarism threshold. Severity uses the
@@ -236,11 +243,25 @@ def flag_plagiarism(
             score = float(similarity_df.iloc[i, j])
 
             if is_plagiarism(score, threshold):
+                doc_a = doc_names[i]
+                doc_b = doc_names[j]
+                matched_length = 0
+
+                # Find the exact matching chunk and its word count
+                if chunked_docs is not None and embeddings is not None:
+                    sim_matrix = cosine_similarity(embeddings[doc_a], embeddings[doc_b])
+                    idx_a, idx_b = np.unravel_index(
+                        np.argmax(sim_matrix), sim_matrix.shape
+                    )
+                    chunk_text = chunked_docs[doc_a][idx_a]
+                    matched_length = len(chunk_text.split())
+
                 flags.append(
                     {
-                        "doc_a": doc_names[i],
-                        "doc_b": doc_names[j],
+                        "doc_a": doc_a,
+                        "doc_b": doc_b,
                         "similarity": round(score, 4),
+                        "matched_length": matched_length,
                         "severity": severity_from_score(
                             score,
                             DEFAULT_THRESHOLDS,

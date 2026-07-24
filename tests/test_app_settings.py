@@ -57,7 +57,9 @@ def test_app_settings_reset_to_defaults(mock_embed, mock_webhook):
         (btn for btn in at.button if btn.key and "reset_defaults_button" in btn.key),
         None,
     )
-    assert reset_btn is not None, "Reset to Factory Defaults button was not found in the sidebar"
+    assert (
+        reset_btn is not None
+    ), "Reset to Factory Defaults button was not found in the sidebar"
 
     # Click the reset button and re-render
     reset_btn.click().run(timeout=30)

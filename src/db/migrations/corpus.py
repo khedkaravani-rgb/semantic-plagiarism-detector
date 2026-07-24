@@ -6,7 +6,6 @@ import sqlite3
 
 from .common import column_exists, run_migrations
 
-
 CORPUS_SCHEMA_VERSION = 5
 
 
@@ -50,9 +49,7 @@ def migration_002_add_document_metadata(
         "assignment_title",
     ):
         if not column_exists(connection, "documents", column_name):
-            connection.execute(
-                f'ALTER TABLE documents ADD COLUMN "{column_name}" TEXT'
-            )
+            connection.execute(f'ALTER TABLE documents ADD COLUMN "{column_name}" TEXT')
 
 
 def migration_003_add_required_indexes(
@@ -104,16 +101,21 @@ def migration_004_add_plagiarism_incidents(
         ON plagiarism_incidents(review_status)
         """
     )
+
+
 def migration_005_add_false_positives(cursor):
     """Adds a table to track dismissed false-positive plagiarism pairs."""
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS false_positives (
             document_a TEXT,
             document_b TEXT,
             date_dismissed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (document_a, document_b)
         )
-    """)
+    """
+    )
+
 
 CORPUS_MIGRATIONS = {
     1: migration_001_create_base_schema,

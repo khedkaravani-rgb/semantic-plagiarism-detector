@@ -22,64 +22,10 @@ get_tour_completed(username)       → bool
 set_tour_completed(username, completed) → None
 """
 
-import hashlib
+import os
 import sqlite3
-from pathlib import Path
 
-# Database setup
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "plagiarism_detector.db"
-
-
-
-def init_db():
-    """Initialize database tables and seed default admin user if empty."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'user'
-        )
-        """
-    )
-    conn.commit()
-
-    # Seed default admin account if users table is completely empty
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        default_pass_hash = hashlib.sha256("admin123".encode()).hexdigest()
-        cursor.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            ("admin", default_pass_hash, "admin"),
-        )
-        conn.commit()
-
-    conn.close()
-
-
-def add_user(username: str, password: str, role: str = "user") -> bool:
-    """Add a new user to the database."""
-    init_db()  # Ensure DB is initialized
-    if not username or not password:
-        raise ValueError("Username and password cannot be empty.")
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    try:
-        cursor.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            (username, password_hash, role),
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        raise ValueError(f"User '{username}' already exists.")
-    finally:
-        conn.close()
+import bcrypt
 
 from src.db.migrations import migrate_auth_database
 
@@ -153,9 +99,9 @@ def init_db() -> None:
         raise sqlite3.Error(f"Failed to initialize authentication database: {e}") from e
 
 
-
 def verify_user(username: str, password: str) -> bool:
-    """Return True if username exists and password matches the stored hash."""
+    """Return True if username exists, password matches the stored hash, and account is active."""
+    init_db()  # Ensure DB is initialized
     try:
         username = _validate_username(username)
         password = _validate_password(password)
@@ -164,36 +110,22 @@ def verify_user(username: str, password: str) -> bool:
 
     with _connect() as conn:
         row = conn.execute(
-            "SELECT password FROM users WHERE username = ?",
+            "SELECT password, is_active FROM users WHERE username = ?",
             (username,),
         ).fetchone()
 
+        if not row:
+            return False
 
-def verify_user(username: str, password: str) -> bool:
-    """Verify user credentials against stored password hashes."""
-    init_db()  # Ensure DB is initialized
-    if not username or not password:
-        return False
+        stored_hash, is_active = row
+        if not is_active:
+            return False
 
+        try:
+            return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        except ValueError:
+            return False
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-
-    stored_hash = row[0]
-    try:
-        return bcrypt.checkpw(password.encode(), stored_hash.encode())
-    except ValueError:
-        return False
-
-
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    cursor.execute(
-        "SELECT username FROM users WHERE username = ? AND password_hash = ?",
-        (username, password_hash),
-    )
-    user = cursor.fetchone()
-    conn.close()
 
 # Alias for compatibility
 authenticate_user = verify_user
@@ -201,12 +133,6 @@ authenticate_user = verify_user
 
 def get_user_role(username: str) -> str | None:
     """Return the role of a user, or None if not found."""
-
-    username = _validate_username(username)
-
-
-    return user is not None
-
     try:
         username = _validate_username(username)
         with _connect() as conn:
@@ -218,72 +144,6 @@ def get_user_role(username: str) -> str | None:
     except sqlite3.Error as e:
         raise sqlite3.Error(f"Failed to retrieve user role: {e}") from e
 
-
-
-# Alias for compatibility
-authenticate_user = verify_user
-
-
-
-def get_user_role(username: str) -> str:
-    """Get the role of a given user ('admin' or 'user')."""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    row = cursor.fetchone()
-    conn.close()
-
-    return row[0] if row else "user"
-
-
-def get_all_users() -> list:
-    """Retrieve all registered users and their roles."""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, role FROM users")
-    users = cursor.fetchall()
-    conn.close()
-
-    return [{"username": u[0], "role": u[1]} for u in users]
-
-
-def delete_user(username: str) -> bool:
-    """Delete a user from the database."""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM users WHERE username = ?", (username,))
-    deleted = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-
-    return deleted
-
-
-def update_password(username: str, new_password: str) -> bool:
-    """Update password for an existing user."""
-    init_db()
-    if not new_password or len(new_password) < 4:
-        raise ValueError("Password must be at least 4 characters long.")
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    password_hash = hashlib.sha256(new_password.encode()).hexdigest()
-    cursor.execute(
-        "UPDATE users SET password_hash = ? WHERE username = ?",
-        (password_hash, username),
-    )
-    updated_rows = cursor.rowcount
-    conn.commit()
-    conn.close()
-
-    if updated_rows == 0:
-        raise ValueError("User not found.")
-
-    return True
 
 def add_user(username: str, password: str, role: str = "teacher") -> None:
     """Insert a user and preserve SQLite duplicate-user semantics."""
@@ -315,9 +175,17 @@ def get_all_users() -> list:
     try:
         with _connect() as conn:
             rows = conn.execute(
-                "SELECT id, username, role FROM users ORDER BY id"
+                "SELECT id, username, role, is_active FROM users ORDER BY id"
             ).fetchall()
-            return [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+            return [
+                {
+                    "id": r[0],
+                    "username": r[1],
+                    "role": r[2],
+                    "is_active": bool(r[3]),
+                }
+                for r in rows
+            ]
     except sqlite3.Error as e:
         raise sqlite3.Error(f"Failed to retrieve users: {e}") from e
 
@@ -453,8 +321,6 @@ def clear_login_attempts(username: str) -> None:
     redis_clear_login_attempts(identifier)
 
 
-
-
 def get_user_preferences(username: str) -> dict:
     """Return user preferences as a dictionary, or empty dict if none exist."""
     username = username.lower()
@@ -511,6 +377,50 @@ def get_or_create_sso_user(email: str, default_role: str = "teacher") -> str:
         return role
 
 
+def get_user_active_status(username: str) -> bool:
+    """Return whether a user account is active."""
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT is_active FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            return bool(row[0]) if row else False
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve user active status: {e}") from e
+
+
+def set_user_active_status(username: str, is_active: bool) -> None:
+    """Set whether a user account is active (suspended or active)."""
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            # We don't allow suspending the 'admin' account to prevent lockouts
+            if username == "admin" and not is_active:
+                raise ValueError("The admin account cannot be suspended.")
+
+            conn.execute(
+                "UPDATE users SET is_active = ? WHERE username = ?",
+                (1 if is_active else 0, username),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to update user active status: {e}") from e
+
+
+def is_user_active(username: str) -> bool:
+    """Return True if username exists and is_active is 1, or if username does not exist yet."""
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT is_active FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            return bool(row[0]) if row else True
+    except sqlite3.Error:
+        return True
 
 
 def get_user_count() -> int:
@@ -522,4 +432,3 @@ def get_user_count() -> int:
         cursor = conn.execute("SELECT COUNT(*) FROM users")
         row = cursor.fetchone()
         return row[0] if row else 0
-

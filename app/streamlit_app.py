@@ -115,6 +115,7 @@ from src.db import (
     get_unique_class_sections,
     init_corpus_db,
 )
+from src.core.telemetry import TelemetryService
 from src.db.auth import (
     check_login_rate_limit,
     clear_login_attempts,
@@ -539,6 +540,14 @@ def save_preferences_callback():
 
 with st.sidebar:
     st.markdown(f"👤 Logged in as **{st.session_state.get('username', '')}**")
+    
+    # Render cached telemetry user count badge
+    try:
+        active_users = TelemetryService.get_active_user_count()
+        st.caption(f"Total System Users: {active_users}")
+    except Exception:
+        pass
+
     if st.button("🚪 Log Out", use_container_width=True):
         import logging
         from datetime import datetime, timezone

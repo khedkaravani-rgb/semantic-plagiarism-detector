@@ -9,13 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from src.db.migrations import migrate_corpus_database
-
 from src.core.config import (
     normalize_score,
     normalize_severity_label,
     severity_from_score,
 )
+from src.db.migrations import migrate_corpus_database
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "corpus.db"
 VALID_REVIEW_STATUSES = {"Pending", "Resolved"}
@@ -78,6 +77,30 @@ def init_incident_db(
             ) from exc
 
 
+def _validate_incident(flag: Mapping[str, Any]) -> tuple[bool, str]:
+    doc_a = str(flag.get("doc_a", "")).strip()
+    doc_b = str(flag.get("doc_b", "")).strip()
+
+    if not doc_a:
+        return False, "Missing document A."
+
+    if not doc_b:
+        return False, "Missing document B."
+
+    if doc_a == doc_b:
+        return False, "Document identifiers must be different."
+
+    try:
+        similarity = float(flag.get("similarity", 0.0))
+    except (TypeError, ValueError):
+        return False, "Similarity score must be numeric."
+
+    if not 0.0 <= similarity <= 1.0:
+        return False, "Similarity score must be between 0.0 and 1.0."
+
+    return True, ""
+
+
 def _fetch_all_incidents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -137,7 +160,6 @@ def sync_flagged_incidents(
                         timestamp,
                     ),
                 )
-
             conn.commit()
 
             rows = conn.execute(
@@ -155,8 +177,6 @@ def sync_flagged_incidents(
         except sqlite3.Error as e:
             conn.rollback()
             raise sqlite3.Error(f"Failed to synchronize incidents: {e}") from e
-
-
 
 
 def get_all_incidents(
@@ -227,16 +247,14 @@ def get_high_severity_trends(
     days: int = 30,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
-    """
-    Get daily count of High severity incidents over the specified number of days.
-    Returns list of dicts with 'date' and 'count' keys.
-    """
+    # Get daily count of High severity incidents over the specified number of days.
+    # Returns list of dicts with 'date' and 'count' keys.
     init_incident_db(db_path)
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT 
+            SELECT
                 DATE(date_flagged) as date,
                 COUNT(*) as count
             FROM plagiarism_incidents
@@ -254,16 +272,14 @@ def get_most_plagiarized_documents(
     limit: int = 10,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
-    """
-    Get the most frequently plagiarized documents based on incident count.
-    Returns list of dicts with 'document_name' and 'incident_count' keys.
-    """
+    # Get the most frequently plagiarized documents based on incident count.
+    # Returns list of dicts with 'document_name' and 'incident_count' keys.
     init_incident_db(db_path)
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT 
+            SELECT
                 document_name,
                 COUNT(*) as incident_count
             FROM (
@@ -278,3 +294,28 @@ def get_most_plagiarized_documents(
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def add_false_positive(
+    doc_a: str, doc_b: str, db_path: str | Path = DEFAULT_DB_PATH
+) -> None:
+    """Inserts a dismissed pair into the false_positives table."""
+    init_incident_db(db_path)
+    norm_a, norm_b = _normalise_pair(doc_a, doc_b)
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO false_positives (document_a, document_b) VALUES (?, ?)",
+            (norm_a, norm_b),
+        )
+        conn.commit()
+
+
+def get_false_positives(db_path: str | Path = DEFAULT_DB_PATH) -> set[tuple[str, str]]:
+    """Returns a set of all normalized dismissed pairs for fast filtering."""
+    init_incident_db(db_path)
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute(
+            "SELECT document_a, document_b FROM false_positives"
+        ).fetchall()
+        return set((row[0], row[1]) for row in rows)

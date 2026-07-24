@@ -154,7 +154,9 @@ def test_clear_all_documents_non_admin_forbidden(mock_get_role):
 @patch("src.api.app.clear_all_data")
 @patch("os.path.exists")
 @patch("os.remove")
-def test_clear_all_documents_admin_success(mock_remove, mock_exists, mock_clear_db, mock_get_role):
+def test_clear_all_documents_admin_success(
+    mock_remove, mock_exists, mock_clear_db, mock_get_role
+):
     """Verify that an administrator can successfully clear all documents."""
     mock_get_role.return_value = "admin"
     mock_exists.return_value = True
@@ -169,7 +171,7 @@ def test_clear_all_documents_admin_success(mock_remove, mock_exists, mock_clear_
     data = response.json()
     assert data["status"] == "success"
     assert "cleared" in data["message"]
-    
+
     mock_clear_db.assert_called_once()
     mock_exists.assert_called_once()
     mock_remove.assert_called_once()
@@ -179,7 +181,9 @@ def test_clear_all_documents_admin_success(mock_remove, mock_exists, mock_clear_
 @patch("src.api.app.clear_all_data")
 @patch("os.path.exists")
 @patch("os.remove")
-def test_clear_all_documents_already_empty(mock_remove, mock_exists, mock_clear_db, mock_get_role):
+def test_clear_all_documents_already_empty(
+    mock_remove, mock_exists, mock_clear_db, mock_get_role
+):
     """Verify that clearing an already empty database behaves safely (index doesn't exist)."""
     mock_get_role.return_value = "admin"
     mock_exists.return_value = False
@@ -193,7 +197,7 @@ def test_clear_all_documents_already_empty(mock_remove, mock_exists, mock_clear_
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    
+
     mock_clear_db.assert_called_once()
     mock_exists.assert_called_once()
     mock_remove.assert_not_called()

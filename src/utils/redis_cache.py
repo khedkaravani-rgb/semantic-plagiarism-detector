@@ -14,11 +14,17 @@ try:
     import redis
 except ImportError:
     redis = None
+import logging
+
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 RedisError = getattr(redis, "RedisError", Exception)
+RedisConnectionError = getattr(redis, "ConnectionError", ConnectionError)
+RedisTimeoutError = getattr(redis, "TimeoutError", TimeoutError)
 
 
 # Redis connection configuration
@@ -77,8 +83,16 @@ class RedisCache:
             # Test connection
             self._client.ping()
             print(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-        except (AttributeError, redis.ConnectionError, redis.TimeoutError) as e:
+        except (
+            RedisConnectionError,
+            RedisTimeoutError,
+            ConnectionRefusedError,
+        ) as e:
             print(f"[RedisCache] Redis connection failed: {e}. Running without cache.")
+            
+            logger.warning(
+                f"[RedisCache] Redis connection failed: {e}. Running without cache."
+            )
             self._client = None
 
     def is_available(self) -> bool:
@@ -90,6 +104,25 @@ class RedisCache:
             return True
         except Exception:
             return False
+
+    def ping(self) -> tuple[bool, float | None]:
+        """Ping Redis and measure round-trip latency.
+
+        Returns:
+            Tuple of (connected: bool, latency_ms: float | None).
+            latency_ms is None if the connection is unavailable.
+        """
+        if self._client is None:
+            return False, None
+        try:
+            import time
+
+            start = time.monotonic()
+            self._client.ping()
+            elapsed = (time.monotonic() - start) * 1000
+            return True, round(elapsed, 1)
+        except Exception:
+            return False, None
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Store a value in Redis with optional TTL."""
@@ -103,9 +136,10 @@ class RedisCache:
             else:
                 self._client.set(key, serialized)
             return True
-        except (RedisError, pickle.PickleError) as e:
+        except (RedisError, pickle.PickleError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error setting key {key}: {e}")
             return False
+       
 
     def get(self, key: str) -> Optional[Any]:
         """Retrieve a value from Redis."""
@@ -117,9 +151,10 @@ class RedisCache:
             if data is None:
                 return None
             return pickle.loads(data)
-        except (RedisError, pickle.PickleError) as e:
+        except (RedisError, pickle.PickleError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error getting key {key}: {e}")
             return None
+        
 
     def delete(self, key: str) -> bool:
         """Delete a key from Redis."""
@@ -129,9 +164,10 @@ class RedisCache:
         try:
             self._client.delete(key)
             return True
-        except RedisError as e:
+        except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error deleting key {key}: {e}")
             return False
+        
 
     def set_json(self, key: str, value: dict, ttl: Optional[int] = None) -> bool:
         """Store a JSON-serializable dict in Redis."""
@@ -145,9 +181,10 @@ class RedisCache:
             else:
                 self._client.set(key, serialized)
             return True
-        except (RedisError, json.JSONDecodeError) as e:
+        except (RedisError, json.JSONDecodeError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error setting JSON key {key}: {e}")
             return False
+        
 
     def get_json(self, key: str) -> Optional[dict]:
         """Retrieve a JSON value from Redis."""
@@ -159,9 +196,10 @@ class RedisCache:
             if data is None:
                 return None
             return json.loads(data)
-        except (RedisError, json.JSONDecodeError) as e:
+        except (RedisError, json.JSONDecodeError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error getting JSON key {key}: {e}")
             return None
+        
 
     def exists(self, key: str) -> bool:
         """Check if a key exists in Redis."""
@@ -170,9 +208,10 @@ class RedisCache:
 
         try:
             return bool(self._client.exists(key))
-        except RedisError as e:
+        except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error checking key {key}: {e}")
             return False
+        
 
     def clear_pattern(self, pattern: str) -> int:
         """Delete all keys matching a pattern."""
@@ -184,9 +223,10 @@ class RedisCache:
             if keys:
                 return self._client.delete(*keys)
             return 0
-        except RedisError as e:
+        except (RedisError, ConnectionRefusedError) as e:
             print(f"[RedisCache] Error clearing pattern {pattern}: {e}")
             return 0
+        
 
 
 # Global cache instance

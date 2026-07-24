@@ -10,8 +10,9 @@ from src.core.document_parser import (
     extract_text_from_pdf,
     extract_text_from_txt,
     extract_texts,
-    strip_bibliography,
+    clean_text,
     remove_ignore_phrases,
+    strip_bibliography,
 )
 
 # Skip OCR tests when Tesseract binary is not present on this machine
@@ -43,7 +44,9 @@ def _make_docx_bytes(text: str) -> bytes:
 
 @patch("src.core.document_parser._ocr_pdf_page", return_value="")
 def test_extract_from_pdf_bytes(mock_ocr):
-    pdf_bytes = _make_pdf_bytes("Hello PDF this is a document with enough words to satisfy native text check")
+    pdf_bytes = _make_pdf_bytes(
+        "Hello PDF this is a document with enough words to satisfy native text check"
+    )
     # For blank page PDF, pdfplumber might return empty string, but it shouldn't error
     result = extract_text_from_pdf(pdf_bytes)
     assert isinstance(result, str)
@@ -72,7 +75,7 @@ def test_extract_from_pdf_filters_repeated_headers_page_numbers_and_whitespace()
     fake_pdf.__exit__ = MagicMock(return_value=False)
 
     with patch("src.core.document_parser.pdfplumber.open", return_value=fake_pdf):
-        result = extract_text_from_pdf(io.BytesIO(b"fake-pdf"))
+        result = extract_text_from_pdf(io.BytesIO(b"%PDF-fake-pdf"))
 
     # Repeated header across all pages must be stripped
     assert "Research Report" not in result
@@ -99,7 +102,9 @@ def test_extract_from_txt_bytes():
 
 @patch("src.core.document_parser._ocr_pdf_page", return_value="")
 def test_extract_text_routing(mock_ocr):
-    pdf_bytes = _make_pdf_bytes("Hello PDF this is a document with enough words to satisfy native text check")
+    pdf_bytes = _make_pdf_bytes(
+        "Hello PDF this is a document with enough words to satisfy native text check"
+    )
     docx_bytes = _make_docx_bytes("Hello DOCX")
     txt_bytes = b"Hello TXT"
 
@@ -220,10 +225,13 @@ class TestStripBibliography:
 # remove_ignore_phrases tests (Issue #161)
 # ---------------------------------------------------------------------------
 
+
 class TestRemoveIgnorePhrases:
 
     def test_removes_single_phrase(self):
-        text = "Q1: Explain the theory of relativity. This is my answer about relativity."
+        text = (
+            "Q1: Explain the theory of relativity. This is my answer about relativity."
+        )
         ignore_phrases = "Q1: Explain the theory of relativity"
         result = remove_ignore_phrases(text, ignore_phrases)
         assert "Q1: Explain the theory of relativity" not in result
@@ -291,3 +299,61 @@ class TestRemoveIgnorePhrases:
         ignore_phrases = "Q1: Some question\nQ2: Another question"
         result = remove_ignore_phrases(text, ignore_phrases)
         assert result == text
+
+
+# ---------------------------------------------------------------------------
+# clean_text tests
+# ---------------------------------------------------------------------------
+
+
+class TestCleanText:
+
+    def test_collapses_multiple_blank_lines(self):
+        text = "Line 1\n\n\n\nLine 2"
+        result = clean_text(text)
+        assert result == "Line 1\n\nLine 2"
+
+    def test_collapses_multiple_spaces_and_tabs(self):
+        text = "Hello     world\t\tPython"
+        result = clean_text(text)
+        assert result == "Hello world Python"
+
+    def test_replaces_unicode_spaces(self):
+        text = "Hello\u00a0World\u200b!"
+        result = clean_text(text)
+        assert result == "Hello World !"
+
+    def test_removes_spaces_before_newline(self):
+        text = "Hello   \nWorld"
+        result = clean_text(text)
+        assert result == "Hello\nWorld"
+
+    def test_removes_spaces_after_newline(self):
+        text = "Hello\n    World"
+        result = clean_text(text)
+        assert result == "Hello\nWorld"
+
+    def test_strips_leading_and_trailing_whitespace(self):
+        text = "   Hello World   \n"
+        result = clean_text(text)
+        assert result == "Hello World"
+
+    def test_handles_empty_string(self):
+        text = ""
+        result = clean_text(text)
+        assert result == ""
+
+    def test_preserves_normal_text(self):
+        text = "This is a normal sentence."
+        result = clean_text(text)
+        assert result == text
+
+    def test_combines_all_cleaning_steps(self):
+        text = "  Hello\t\t\n\n\n  World\u00a0 "
+        result = clean_text(text)
+        assert result == "Hello\n\nWorld"
+
+    def test_only_whitespace_returns_empty(self):
+        text = "   \n\t\n  "
+        result = clean_text(text)
+        assert result == ""

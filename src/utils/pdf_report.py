@@ -9,7 +9,6 @@ from datetime import datetime
 from io import BytesIO
 from typing import List, Optional, Tuple
 
-import fitz
 from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -17,8 +16,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
-from src.core.config import severity_key
-
 from reportlab.platypus import (
     PageBreak,
     Paragraph,
@@ -28,17 +25,27 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+try:
+    import fitz  # PyMuPDF
+
+    _HAS_FITZ = True
+except Exception:
+    _HAS_FITZ = False
+
 
 def get_similarity_color(score: float) -> HexColor:
-    """Return a report color using central severity boundaries."""
-    tier = severity_key(score)
-
-    if tier == "high":
+    """
+    Returns a color based on similarity score.
+    - High (≥0.90): Red
+    - Medium (≥0.75): Orange
+    - Low (<0.75): Green
+    """
+    if score >= 0.90:
         return HexColor("#ff4b4b")
-    if tier == "medium":
+    elif score >= 0.75:
         return HexColor("#ffa500")
-    return HexColor("#21c55d")
-
+    else:
+        return HexColor("#21c55d")
 
 
 def wrap_text(text: str, max_chars: int = 400) -> str:
@@ -63,16 +70,33 @@ def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
         pdf_bytes = pdf_buffer.getvalue()
 
         # 1. Try PyMuPDF (fitz) which is very powerful for garbage collection and stream compression
-        try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            # garbage=4 performs maximum cleanup including duplicate merging
-            compressed_bytes = doc.tobytes(garbage=4, deflate=True)
-            doc.close()
-            return BytesIO(compressed_bytes)
-        except Exception:
-            # Fallback to pypdf if PyMuPDF fails
+        if _HAS_FITZ:
             try:
-                from pypdf import PdfReader, PdfWriter
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                # garbage=4 performs maximum cleanup including duplicate merging
+                compressed_bytes = doc.tobytes(garbage=4, deflate=True)
+                doc.close()
+                return BytesIO(compressed_bytes)
+            except Exception:
+                pass
+
+        # Fallback to pypdf if PyMuPDF fails or is unavailable
+        try:
+            from pypdf import PdfReader, PdfWriter
+
+            reader = PdfReader(BytesIO(pdf_bytes))
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            for page in writer.pages:
+                page.compress_content_streams()
+            out_buf = BytesIO()
+            writer.write(out_buf)
+            out_buf.seek(0)
+            return out_buf
+        except ImportError:
+            try:
+                from PyPDF2 import PdfReader, PdfWriter
 
                 reader = PdfReader(BytesIO(pdf_bytes))
                 writer = PdfWriter()
@@ -85,21 +109,7 @@ def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
                 out_buf.seek(0)
                 return out_buf
             except ImportError:
-                try:
-                    from PyPDF2 import PdfReader, PdfWriter
-
-                    reader = PdfReader(BytesIO(pdf_bytes))
-                    writer = PdfWriter()
-                    for page in reader.pages:
-                        writer.add_page(page)
-                    for page in writer.pages:
-                        page.compress_content_streams()
-                    out_buf = BytesIO()
-                    writer.write(out_buf)
-                    out_buf.seek(0)
-                    return out_buf
-                except ImportError:
-                    pass
+                pass
 
         # If all compression attempts fail, return the original buffer
         pdf_buffer.seek(original_pos)
@@ -381,10 +391,26 @@ def highlight_pdf_matches(
     matching_chunks: List[str],
     highlight_color: Tuple[float, float, float] = (1.0, 0.85, 0.0),  # Yellow
 ) -> bytes:
-    """Opens an original PDF, searches for matching plagiarized text chunks,
+    """
+    Opens an original PDF, searches for matching plagiarized text chunks,
     applies yellow highlight annotations on exact coordinate boxes,
     and returns the modified PDF as bytes.
+
+    Args:
+        pdf_source: Path to the PDF file (str) or raw bytes (bytes)
+        matching_chunks: List of text chunk strings to search and highlight
+        highlight_color: RGB tuple normalized between 0.0 and 1.0
+
+    Returns:
+        bytes: Binary PDF data with highlighted matches
     """
+    if not _HAS_FITZ:
+        print("[pdf_report] Warning: PyMuPDF is unavailable, skipping PDF highlights.")
+        if isinstance(pdf_source, bytes):
+            return pdf_source
+        with open(pdf_source, "rb") as f:
+            return f.read()
+
     if isinstance(pdf_source, bytes):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
     else:
@@ -397,7 +423,7 @@ def highlight_pdf_matches(
             if len(chunk_clean) < 3:
                 continue
 
-            # Search page for matching text coordinates
+            # Search for coordinate rectangles of the text on the page
             quad_matches = page.search_for(chunk_clean)
             for rect in quad_matches:
                 annot = page.add_highlight_annot(rect)

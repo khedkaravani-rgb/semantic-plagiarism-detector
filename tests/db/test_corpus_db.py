@@ -18,15 +18,12 @@ from src.db.corpus_db import (
 
 
 @pytest.fixture(autouse=True)
-def setup_test_db():
-    # Initialize database
-    init_corpus_db()
-    # Clear any leftover records
-    clear_all_data()
+def setup_test_db(mock_db):
+    """
+    Uses the global mock_db fixture from conftest.py for complete DB isolation
+    and automatic teardown per test.
+    """
     yield
-    # Cleanup after tests
-    clear_all_data()
-
 
 def test_add_document_metadata():
     # Add first document
@@ -175,25 +172,30 @@ def test_class_queries():
 
 
 def test_clear_all_data_clears_incidents():
-    from src.db.incidents import sync_flagged_incidents, get_all_incidents
-    
+    from src.db.incidents import get_all_incidents, sync_flagged_incidents
+
     # 1. Add mock documents
     add_document("doc1.pdf", "hash1")
     add_document("doc2.pdf", "hash2")
-    
+
     # 2. Add mock incidents
     flags = [
-        {"doc_a": "doc1.pdf", "doc_b": "doc2.pdf", "similarity": 0.85, "severity": "High"}
+        {
+            "doc_a": "doc1.pdf",
+            "doc_b": "doc2.pdf",
+            "similarity": 0.85,
+            "severity": "High",
+        }
     ]
     sync_flagged_incidents(flags)
-    
+
     # Verify they exist
     incidents = get_all_incidents()
     assert len(incidents) == 1
-    
+
     # 3. Clear all data
     clear_all_data()
-    
+
     # Verify everything is cleared
     assert len(get_all_documents()) == 0
     assert len(get_all_incidents()) == 0

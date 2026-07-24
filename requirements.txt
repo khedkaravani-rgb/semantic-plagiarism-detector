@@ -50,6 +50,7 @@ faker>=20.0.0                   # Fake data generation for mock essay utility (#
 # ── Caching & Session Management ───────────────────────────────────────────────
 
 redis>=5.0.0                    # Redis client for session state and caching
+psutil>=5.9.0                   # System memory monitoring
 
 # ── Web Scraping ───────────────────────────────────────────────────────────────
 beautifulsoup4>=4.15.0          # HTML parsing for URL content extraction

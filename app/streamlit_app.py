@@ -10,6 +10,7 @@ import base64
 import io as _io
 import os
 import time
+import psutil
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -812,6 +813,11 @@ if user_role != "admin":
                 if embeddings_matrix.shape[0] == 0:
                     st.warning("No documents are currently indexed.")
                 else:
+                    memory = psutil.virtual_memory()
+                    if memory.percent >= 85:
+                        st.warning(
+                            "⚠️ High memory usage detected (>85%). Large FAISS indexes may cause system instability or out-of-memory crashes."
+                        )
                     faiss_index = build_index_from_matrix(embeddings_matrix, index_type="auto")
                     processed_query = query_text.strip()
                     query_vec = embed_chunks([processed_query])[0]
@@ -878,6 +884,11 @@ else:
 
     if faiss_index is None:
         try:
+            memory = psutil.virtual_memory()
+            if memory.percent >= 85:
+                st.warning(
+                    "⚠️ High memory usage detected (>85%). Large FAISS indexes may cause system instability or out-of-memory crashes."
+                )
             faiss_index, registry, index_recovered = load_or_rebuild_index(_INDEX_PATH)
             if index_recovered:
                 if faiss_index.ntotal:
@@ -1425,6 +1436,13 @@ else:
                     chunk_mat[j, i] = score
 
         chunk_sim_df = pd.DataFrame(chunk_mat, index=names, columns=names)
+        
+        memory = psutil.virtual_memory()
+        if memory.percent >= 85:
+            st.warning(
+                "⚠️ High memory usage detected (>85%). Large FAISS indexes may cause system instability or out-of-memory crashes."
+            )
+        
         faiss_index, registry = build_index(embeddings, chunked_docs)
         ai_probabilities = detect_documents_ai_probability(chunked_docs)
 

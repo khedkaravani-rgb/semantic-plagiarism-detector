@@ -76,7 +76,7 @@ from src.visualization.heatmap import plot_similarity_heatmap
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
 except ImportError:
-    from utils.excel_export import export_similarity_matrix_to_excel
+    from utils.excel_export import export_similarity_matrix_to_excel  # type: ignore
 
 # Initialize corpus database
 init_corpus_db()
@@ -520,16 +520,28 @@ else:
                     except Exception as err:
                         st.error(f"Failed to import from Google Drive: {str(err)}")
 
-    # 3. MERGE LOCAL AND DRIVE FILE BYTES
+    # 3. MERGE LOCAL AND DRIVE FILE BYTES & ENFORCE 10MB FILE SIZE LIMIT (#169)
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB limit
     file_bytes_dict = {}
 
     if uploaded_files:
         for f in uploaded_files:
-            file_bytes_dict[f.name] = f.read()
-            f.seek(0)
+            if f.size > MAX_FILE_SIZE_BYTES:
+                st.error(
+                    f"⚠️ File **'{f.name}'** exceeds the maximum size limit of 10MB ({f.size / (1024 * 1024):.2f}MB). Please upload a smaller file."
+                )
+            else:
+                file_bytes_dict[f.name] = f.read()
+                f.seek(0)
 
     if st.session_state.drive_files_dict:
-        file_bytes_dict.update(st.session_state.drive_files_dict)
+        for g_name, g_bytes in st.session_state.drive_files_dict.items():
+            if len(g_bytes) > MAX_FILE_SIZE_BYTES:
+                st.error(
+                    f"⚠️ Google Drive file **'{g_name}'** exceeds the maximum size limit of 10MB ({len(g_bytes) / (1024 * 1024):.2f}MB)."
+                )
+            else:
+                file_bytes_dict[g_name] = g_bytes
 
     # 4. PIPELINE STOP CHECK
     if len(file_bytes_dict) < 2:
@@ -537,7 +549,7 @@ else:
             st.markdown(
                 empty_state_html(
                     "Waiting for Files",
-                    "Please upload or import from Drive at least 2 PDF, DOCX, or TXT assignments to begin.",
+                    "Please upload or import from Drive at least 2 PDF, DOCX, or TXT assignments (under 10MB each) to begin.",
                     "📂",
                 ),
                 unsafe_allow_html=True,

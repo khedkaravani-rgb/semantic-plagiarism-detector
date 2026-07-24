@@ -34,6 +34,25 @@ except ImportError:  # pragma: no cover - optional dependency
 import logging
 
 logger = logging.getLogger(__name__)
+# Validate required environment variables during application startup
+REQUIRED_ENV_VARS = [
+    "REDIS_URL",
+    "PLAGIARISM_WEBHOOK_URL",
+    "API_BEARER_TOKEN",
+]
+
+missing_env_vars = [
+    var for var in REQUIRED_ENV_VARS
+    if not os.getenv(var)
+]
+
+if missing_env_vars:
+    logger.warning(
+        "Missing environment variables: %s. "
+        "Some features may not work correctly. "
+        "Please configure them in your .env file.",
+        ", ".join(missing_env_vars),
+    )
 
 from sklearn.metrics.pairwise import cosine_similarity
 

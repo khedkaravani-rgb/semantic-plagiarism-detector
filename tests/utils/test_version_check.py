@@ -15,14 +15,12 @@ import pathlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Import version_check directly to avoid pulling in the heavy src/__init__.py
 # chain (which transitively requires docx, faiss, etc.)
 # ---------------------------------------------------------------------------
 _MOD_PATH = (
-    pathlib.Path(__file__).parent.parent.parent
-    / "src" / "utils" / "version_check.py"
+    pathlib.Path(__file__).parent.parent.parent / "src" / "utils" / "version_check.py"
 )
 _spec = importlib.util.spec_from_file_location("src.utils.version_check", _MOD_PATH)
 _vc_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
@@ -99,7 +97,10 @@ class TestFetchLatestGithubVersion:
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock(return_value=None)
-        mock_response.json.return_value = {"tag_name": "v1.5.0", "name": "Release 1.5.0"}
+        mock_response.json.return_value = {
+            "tag_name": "v1.5.0",
+            "name": "Release 1.5.0",
+        }
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -168,22 +169,32 @@ class TestCheckForUpdateSync:
     """Tests for the synchronous wrapper."""
 
     def test_returns_tag_when_update_available(self) -> None:
-        with patch.object(_vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value="v9.9.9")):
+        with patch.object(
+            _vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value="v9.9.9")
+        ):
             result = check_for_update_sync(local_version="1.0.0")
         assert result == "v9.9.9"
 
     def test_returns_none_when_up_to_date(self) -> None:
-        with patch.object(_vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value=f"v{APP_VERSION}")):
+        with patch.object(
+            _vc_mod,
+            "fetch_latest_github_version",
+            new=AsyncMock(return_value=f"v{APP_VERSION}"),
+        ):
             result = check_for_update_sync(local_version=APP_VERSION)
         assert result is None
 
     def test_returns_none_when_fetch_fails(self) -> None:
-        with patch.object(_vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value=None)
+        ):
             result = check_for_update_sync(local_version="1.0.0")
         assert result is None
 
     def test_returns_none_when_remote_is_older(self) -> None:
-        with patch.object(_vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value="v0.0.1")):
+        with patch.object(
+            _vc_mod, "fetch_latest_github_version", new=AsyncMock(return_value="v0.0.1")
+        ):
             result = check_for_update_sync(local_version="1.0.0")
         assert result is None
 

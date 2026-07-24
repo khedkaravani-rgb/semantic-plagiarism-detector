@@ -15,6 +15,7 @@ try:
 except ImportError:
     redis = None
 import logging
+
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,9 @@ class RedisCache:
             self._client.ping()
             logger.info(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
         except (AttributeError, redis.ConnectionError, redis.TimeoutError) as e:
-            logger.warning(f"[RedisCache] Redis connection failed: {e}. Running without cache.")
+            logger.warning(
+                f"[RedisCache] Redis connection failed: {e}. Running without cache."
+            )
             self._client = None
 
     def is_available(self) -> bool:
@@ -105,6 +108,7 @@ class RedisCache:
             return False, None
         try:
             import time
+
             start = time.monotonic()
             self._client.ping()
             elapsed = (time.monotonic() - start) * 1000

@@ -5,26 +5,29 @@ Generates professional PDF plagiarism reports using ReportLab.
 Provides side-by-side comparison of suspicious paragraph pairs with visual similarity indicators.
 """
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import inch
+from datetime import datetime
+from io import BytesIO
+from typing import List, Optional, Tuple
+
+from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
-    SimpleDocTemplate,
+    PageBreak,
     Paragraph,
+    SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
-    PageBreak,
 )
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib import colors
-from reportlab.lib.utils import ImageReader
-from io import BytesIO
-from typing import List, Optional, Tuple
-from datetime import datetime
+
 try:
     import fitz  # PyMuPDF
+
     _HAS_FITZ = True
 except Exception:
     _HAS_FITZ = False
@@ -76,7 +79,7 @@ def compress_pdf_buffer(pdf_buffer: BytesIO) -> BytesIO:
                 return BytesIO(compressed_bytes)
             except Exception:
                 pass
-                
+
         # Fallback to pypdf if PyMuPDF fails or is unavailable
         try:
             from pypdf import PdfReader, PdfWriter

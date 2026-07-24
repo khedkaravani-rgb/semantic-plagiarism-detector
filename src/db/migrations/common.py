@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from typing import TypeAlias
 
-
 Migration: TypeAlias = Callable[[sqlite3.Connection], None]
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 from collections import Counter
@@ -13,7 +14,6 @@ from urllib.parse import urlparse
 import docx
 import pdfplumber
 from langdetect import LangDetectException, detect
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
         return text
 
     # Split ignore phrases by line and filter empty lines
-    phrases = [line.strip() for line in ignore_phrases.split('\n') if line.strip()]
+    phrases = [line.strip() for line in ignore_phrases.split("\n") if line.strip()]
 
     if not phrases:
         return text
@@ -143,11 +143,11 @@ def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
     result = text
     for phrase in phrases:
         # Remove exact matches of the phrase
-        result = result.replace(phrase, '')
+        result = result.replace(phrase, "")
 
     # Clean up extra whitespace left after removal
-    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)  # Collapse multiple blank lines
-    result = re.sub(r'[ \t]+', ' ', result)  # Collapse multiple spaces
+    result = re.sub(r"\n\s*\n\s*\n", "\n\n", result)  # Collapse multiple blank lines
+    result = re.sub(r"[ \t]+", " ", result)  # Collapse multiple spaces
     result = result.strip()
 
     return result
@@ -308,9 +308,8 @@ def _ocr_pdf_page(
         from PIL import Image
     except ImportError as exc:
         from src.errors import OCR_DEPENDENCIES_MISSING
-        raise OCRDependencyError(
-            OCR_DEPENDENCIES_MISSING
-        ) from exc
+
+        raise OCRDependencyError(OCR_DEPENDENCIES_MISSING) from exc
 
     _configure_tesseract(pytesseract)
 
@@ -334,9 +333,8 @@ def _ocr_pdf_page(
             ).strip()
     except pytesseract.TesseractNotFoundError as exc:
         from src.errors import OCR_TESSERACT_NOT_FOUND
-        raise OCRDependencyError(
-            OCR_TESSERACT_NOT_FOUND
-        ) from exc
+
+        raise OCRDependencyError(OCR_TESSERACT_NOT_FOUND) from exc
 
 
 def _should_use_parallel() -> bool:
@@ -436,7 +434,15 @@ def extract_texts_parallel(
                 results[name] = _extract_single_file_helper(
                     data, name, ocr_language, ocr_dpi
                 )
-            except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as exc:
+            except (
+                ValueError,
+                TypeError,
+                OSError,
+                KeyError,
+                AttributeError,
+                UnicodeError,
+                RuntimeError,
+            ) as exc:
                 errors[name] = exc
         return results, errors
 
@@ -459,13 +465,19 @@ def extract_texts_parallel(
                 try:
                     text = future.result()
                     results[name] = text
-                except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as exc:
+                except (
+                    ValueError,
+                    TypeError,
+                    OSError,
+                    KeyError,
+                    AttributeError,
+                    UnicodeError,
+                    RuntimeError,
+                ) as exc:
                     errors[name] = exc
 
         return results, errors
     except (RuntimeError, OSError) as exc:
-        print(
-    except Exception as exc:
         logger.warning(
             f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential extraction..."
         )
@@ -476,7 +488,15 @@ def extract_texts_parallel(
                 results[name] = _extract_single_file_helper(
                     data, name, ocr_language, ocr_dpi
                 )
-            except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as e:
+            except (
+                ValueError,
+                TypeError,
+                OSError,
+                KeyError,
+                AttributeError,
+                UnicodeError,
+                RuntimeError,
+            ) as e:
                 errors[name] = e
         return results, errors
 
@@ -485,7 +505,7 @@ def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
     """Extract PDF metadata (Author, Creation Date, Title) using PyMuPDF.
 
     Returns:
-        Dictionary with keys 'author', 'creation_date', 'title'. 
+        Dictionary with keys 'author', 'creation_date', 'title'.
         Values are None if metadata is not available.
     """
     pdf_bytes = _read_pdf_bytes(file)
@@ -493,6 +513,7 @@ def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
 
     try:
         import fitz  # PyMuPDF
+
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             doc_metadata = doc.metadata
             metadata["author"] = doc_metadata.get("author")
@@ -528,14 +549,19 @@ def extract_text_from_pdf(
     # Validate actual file magic bytes to prevent renamed malicious files (Issue #252)
     try:
         import magic
+
         mime_type = magic.from_buffer(pdf_bytes, mime=True)
         if mime_type != "application/pdf":
-            logger.warning(f"[document_parser] Security warning: Invalid MIME type '{mime_type}' for PDF.")
+            logger.warning(
+                f"[document_parser] Security warning: Invalid MIME type '{mime_type}' for PDF."
+            )
             return ""
     except ImportError:
         # Fallback manual magic byte check if python-magic is not installed
         if not pdf_bytes.lstrip().startswith(b"%PDF-"):
-            logger.warning("[document_parser] Security warning: Invalid magic bytes for PDF.")
+            logger.warning(
+                "[document_parser] Security warning: Invalid magic bytes for PDF."
+            )
             return ""
 
     page_lines: List[List[str]] = []
@@ -572,8 +598,6 @@ def extract_text_from_pdf(
         except OCRDependencyError:
             raise
         except (RuntimeError, OSError) as exc:
-            print(
-        except Exception as exc:
             logger.warning(
                 f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential page parsing..."
             )
@@ -643,13 +667,13 @@ def extract_text_from_txt(file: PDFInput) -> str:
 
 def extract_text_from_url(url: str) -> str:
     """Extract text content from a URL using web scraping.
-    
+
     Args:
         url: The URL to fetch and extract text from
-        
+
     Returns:
         Cleaned text content from the webpage
-        
+
     Raises:
         ValueError: If the URL is invalid
         Exception: If fetching or parsing fails
@@ -662,12 +686,15 @@ def extract_text_from_url(url: str) -> str:
             "Web scraping dependencies are missing. Install beautifulsoup4 and "
             "requests using: python -m pip install beautifulsoup4 requests"
         ) from exc
-    
+
     # Validate URL
     parsed = urlparse(url)
-    if not all([parsed.scheme, parsed.netloc]) or parsed.scheme not in ("http", "https"):
+    if not all([parsed.scheme, parsed.netloc]) or parsed.scheme not in (
+        "http",
+        "https",
+    ):
         raise ValueError(f"Invalid URL: {url}")
-    
+
     try:
         # Fetch the webpage with a user agent to avoid being blocked
         headers = {
@@ -675,28 +702,30 @@ def extract_text_from_url(url: str) -> str:
         }
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
-        
+
         # Parse HTML content
         soup = BeautifulSoup(response.content, "html.parser")
-        
+
         # Remove script and style elements
         for script in soup(["script", "style", "nav", "footer", "header", "aside"]):
             script.decompose()
-        
+
         # Get text from main content areas
         text = soup.get_text()
-        
+
         # Clean up whitespace
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = "\n".join(chunk for chunk in chunks if chunk)
-        
+
         return strip_bibliography(text)
-        
+
     except requests.RequestException as exc:
         raise Exception(f"Failed to fetch URL: {exc}") from exc
     except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
         raise Exception(f"Failed to parse webpage content: {exc}") from exc
+
+
 # --- Markdown (.md) support -------------------------------------------------
 #
 # Markdown files are plain text, so we reuse the TXT reading logic to get the
@@ -772,6 +801,7 @@ def strip_markdown_syntax(raw_text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
+
 def extract_text_from_epub(file: PDFInput) -> str:
     """Extract plain text from an EPUB file."""
     try:
@@ -791,9 +821,7 @@ def extract_text_from_epub(file: PDFInput) -> str:
                     "html.parser",
                 )
 
-                text_parts.append(
-                    soup.get_text(" ", strip=True)
-                )
+                text_parts.append(soup.get_text(" ", strip=True))
 
         return "\n\n".join(text_parts).strip()
 

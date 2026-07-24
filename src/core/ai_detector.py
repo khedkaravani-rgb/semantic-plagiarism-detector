@@ -4,13 +4,12 @@ src/core/ai_detector.py
 AI content detection module using transformer models.
 """
 
+import logging
 import os
 from typing import Any, Dict, List
 
 import numpy as np
-
 import torch
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +33,10 @@ def _get_model_and_tokenizer():
         logger.info(f"[ai_detector] Loading model: {model_name} …")
 
         try:
-            from transformers import (
-                AutoModelForSequenceClassification,
-                AutoTokenizer,
-            )
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             _tokenizer = AutoTokenizer.from_pretrained(model_name)
-            _model = AutoModelForSequenceClassification.from_pretrained(
-                model_name
-            )
+            _model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
             logger.info("[ai_detector] Model loaded successfully.")
 
@@ -58,8 +52,6 @@ def _get_model_and_tokenizer():
     return _model, _tokenizer
 
 
-def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[float]:
-    """Detects AI generated text probabilities for a batch of strings."""
 def detect_ai_probability_batch(
     texts: List[str],
     batch_size: int = 8,
@@ -188,24 +180,13 @@ def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
     chunk_scores = detect_ai_probability_batch(chunks)
 
     return {
-        "overall": (
-            float(np.mean(chunk_scores))
-            if chunk_scores
-            else 0.0
-        ),
-        "max": (
-            float(np.max(chunk_scores))
-            if chunk_scores
-            else 0.0
-        ),
+        "overall": (float(np.mean(chunk_scores)) if chunk_scores else 0.0),
+        "max": (float(np.max(chunk_scores)) if chunk_scores else 0.0),
         "chunk_scores": chunk_scores,
     }
 
 
 def detect_documents_ai_probability(
-    chunked_docs: Dict[str, List[str]]
-) -> Dict[str, Dict[str, Any]]:
-    """Calculates AI generated probabilities across multiple documents."""
     chunked_docs: Dict[str, List[str]],
 ) -> Dict[str, Dict[str, Any]]:
     """

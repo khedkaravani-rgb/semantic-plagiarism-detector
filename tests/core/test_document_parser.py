@@ -10,8 +10,8 @@ from src.core.document_parser import (
     extract_text_from_pdf,
     extract_text_from_txt,
     extract_texts,
-    strip_bibliography,
     remove_ignore_phrases,
+    strip_bibliography,
 )
 
 # Skip OCR tests when Tesseract binary is not present on this machine
@@ -43,7 +43,9 @@ def _make_docx_bytes(text: str) -> bytes:
 
 @patch("src.core.document_parser._ocr_pdf_page", return_value="")
 def test_extract_from_pdf_bytes(mock_ocr):
-    pdf_bytes = _make_pdf_bytes("Hello PDF this is a document with enough words to satisfy native text check")
+    pdf_bytes = _make_pdf_bytes(
+        "Hello PDF this is a document with enough words to satisfy native text check"
+    )
     # For blank page PDF, pdfplumber might return empty string, but it shouldn't error
     result = extract_text_from_pdf(pdf_bytes)
     assert isinstance(result, str)
@@ -99,7 +101,9 @@ def test_extract_from_txt_bytes():
 
 @patch("src.core.document_parser._ocr_pdf_page", return_value="")
 def test_extract_text_routing(mock_ocr):
-    pdf_bytes = _make_pdf_bytes("Hello PDF this is a document with enough words to satisfy native text check")
+    pdf_bytes = _make_pdf_bytes(
+        "Hello PDF this is a document with enough words to satisfy native text check"
+    )
     docx_bytes = _make_docx_bytes("Hello DOCX")
     txt_bytes = b"Hello TXT"
 
@@ -220,10 +224,13 @@ class TestStripBibliography:
 # remove_ignore_phrases tests (Issue #161)
 # ---------------------------------------------------------------------------
 
+
 class TestRemoveIgnorePhrases:
 
     def test_removes_single_phrase(self):
-        text = "Q1: Explain the theory of relativity. This is my answer about relativity."
+        text = (
+            "Q1: Explain the theory of relativity. This is my answer about relativity."
+        )
         ignore_phrases = "Q1: Explain the theory of relativity"
         result = remove_ignore_phrases(text, ignore_phrases)
         assert "Q1: Explain the theory of relativity" not in result

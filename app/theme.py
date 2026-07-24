@@ -875,7 +875,6 @@ def version_check_widget_html(
     warning_color = colors["warning"]
     warning_soft = colors["warning_soft"]
     ink = colors["ink"]
-    border = colors["border"]
 
     return f"""
 <div id="spd-update-banner" style="

@@ -10,12 +10,12 @@ Model: paraphrase-multilingual-MiniLM-L12-v2
   - MIT licensed; safe for academic use
 """
 
+import logging
 import os
 from typing import List
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,9 @@ def embed_documents(chunked_docs: dict, batch_size: int = 64) -> dict:
 
     for doc_name, chunks in chunked_docs.items():
         if not chunks:
-            logger.warning(f"[embedding_model] Warning: '{doc_name}' has no chunks. Skipping.")
+            logger.warning(
+                f"[embedding_model] Warning: '{doc_name}' has no chunks. Skipping."
+            )
             continue
         all_chunks.extend(chunks)
         doc_chunk_counts.append(len(chunks))

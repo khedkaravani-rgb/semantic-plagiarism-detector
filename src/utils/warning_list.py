@@ -5,12 +5,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
-from src.db.incidents import get_false_positives, add_false_positive, _normalise_pair
+
 import pandas as pd
 import streamlit as st
 
 from app.theme import badge_html, tier_from_severity_label
 from src.core.config import normalize_severity_label, severity_from_score, severity_rank
+from src.db.incidents import _normalise_pair, add_false_positive, get_false_positives
 
 SORT_FIELDS = {
     "Similarity": "similarity",
@@ -185,8 +186,9 @@ def render_warning_controls(
     st.caption(f"Pairs with similarity ≥ **{threshold:.2f}**")
     dismissed_pairs = get_false_positives()
     filtered_flags = [
-        f for f in flags 
-        if _normalise_pair(f['doc_a'], f['doc_b']) not in dismissed_pairs
+        f
+        for f in flags
+        if _normalise_pair(f["doc_a"], f["doc_b"]) not in dismissed_pairs
     ]
 
     if not filtered_flags:
@@ -260,7 +262,6 @@ def render_warning_controls(
 
     sorted_flags, current_page = prepare_warning_page(
         display_flags,
-        display_flags,  
         search_query=search_query,
         primary_field=SORT_FIELDS[primary_label],
         primary_descending=primary_direction == "Descending",
@@ -298,7 +299,7 @@ def render_warning_controls(
             "The following document pairs have been flagged for high or medium similarity:\n",
         ]
         for idx, flag in enumerate(summary_flags, 1):
-            matched_words = flag.get('matched_length', 0)
+            matched_words = flag.get("matched_length", 0)
             markdown_lines.append(
                 f"{idx}. **{flag['doc_a']}** ↔ **{flag['doc_b']}** — "
                 f"**Similarity:** `{flag['similarity'] * 100:.1f}%` ({matched_words} words matched) | "
@@ -409,9 +410,9 @@ def render_warning_controls(
                     )
                 else:
                     st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
-                
+
                 # Replaced the standard similarity text with your matched length display logic
-                matched_words = flag.get('matched_length', 0)
+                matched_words = flag.get("matched_length", 0)
                 display_text = f"[{flag['similarity'] * 100:.1f}% Similarity | {matched_words} words matched]"
                 st.progress(
                     min(1.0, max(0.0, float(flag["similarity"]))),
@@ -434,7 +435,7 @@ def render_warning_controls(
                 )
             with c3:
                 if st.button("Dismiss", key=f"dismiss_{flag['doc_a']}_{flag['doc_b']}"):
-                    add_false_positive(flag['doc_a'], flag['doc_b'])
+                    add_false_positive(flag["doc_a"], flag["doc_b"])
                     st.rerun()
 
     if current_page.total_items == 0:

@@ -1,4 +1,5 @@
 import json
+
 """
 auth.py
 -------
@@ -17,12 +18,10 @@ get_tour_completed(username)       → bool
 set_tour_completed(username, completed) → None
 """
 
-import sqlite3
-import bcrypt
 import os
-import json
-import hashlib
-import secrets
+import sqlite3
+
+import bcrypt
 
 from src.db.migrations import migrate_auth_database
 
@@ -33,21 +32,17 @@ _DB_PATH = os.path.abspath(
 
 def _connect() -> sqlite3.Connection:
     return sqlite3.connect(_DB_PATH, check_same_thread=False)
+
+
+VALID_ROLES = {"admin", "teacher"}
+
+
 def _hash_password(password: str) -> str:
     """Return a bcrypt hash for the given password."""
     return bcrypt.hashpw(
         password.encode(),
         bcrypt.gensalt(10),
     ).decode()
-
-
-def _hash_password(password: str, salt: str = None) -> str:
-    """Return a sha256 hash for the given password."""
-    if salt is None:
-        salt = secrets.token_hex(8)
-    # Simple hash for local dev to avoid bcrypt DLL hell
-    pwd_hash = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-    return f"{salt}${pwd_hash}"
 
 
 def _validate_username(username: str) -> str:
@@ -75,47 +70,33 @@ def _validate_role(role: str) -> str:
 
 
 def init_db() -> None:
-    """Create users table and seed default admin if not exists."""
-    with _connect() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT    UNIQUE NOT NULL,
-                password TEXT    NOT NULL,
-                role     TEXT    NOT NULL DEFAULT 'teacher',
-                tour_completed INTEGER DEFAULT 0
-            )
-        """)
-        conn.commit()
-        
-        # Schema migration: add tour_completed column if it doesn't exist
-        cursor = conn.execute("PRAGMA table_info(users)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if "tour_completed" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN tour_completed INTEGER DEFAULT 0")
-            conn.commit()
-        
-        exists = conn.execute(
-            "SELECT 1 FROM users WHERE username = ?", ("admin",)
-        ).fetchone()
-        if not exists:
-            hashed = _hash_password("admin123")
-            conn.execute(
-                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                ("admin", hashed, "admin"),
-            )
-        conn.commit()
+    """Create or upgrade users.db and seed the default administrator."""
+    try:
+        with _connect() as conn:
+            migrate_auth_database(conn)
+
+            row = conn.execute(
+                "SELECT COUNT(1) FROM users WHERE username = ?",
+                ("admin",),
+            ).fetchone()
+            exists = bool(row and row[0])
+
+            if not exists:
+                hashed = _hash_password("admin123")
+                conn.execute(
+                    """
+                    INSERT INTO users (username, password, role)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("admin", hashed, "admin"),
+                )
+                conn.commit()
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to initialize authentication database: {e}") from e
 
 
 def verify_user(username: str, password: str) -> bool:
     """Return True if username exists and password matches the stored hash."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT password FROM users WHERE username = ?", (username.lower(),)
-        ).fetchone()
-    if not row:
-        return False
-    return bcrypt.checkpw(password.encode(), row[0].encode())
     try:
         username = _validate_username(username)
         password = _validate_password(password)
@@ -132,18 +113,8 @@ def verify_user(username: str, password: str) -> bool:
         return False
 
     stored_hash = row[0]
-    
-    # Handle old bcrypt hashes (mock verification for local dev) or new sha256 hashes
-    if stored_hash.startswith("$2") or stored_hash.startswith("$1"):
-        # We can't verify old bcrypt hashes without the bcrypt library.
-        # So we just accept the default admin password for convenience.
-        if username == "admin" and password == "admin123":
-            return True
-        return False
-        
     try:
-        salt, _ = stored_hash.split("$", 1)
-        return stored_hash == _hash_password(password, salt)
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())
     except ValueError:
         return False
 
@@ -152,41 +123,18 @@ def verify_user(username: str, password: str) -> bool:
 authenticate_user = verify_user
 
 
-
 def get_user_role(username: str) -> str | None:
     """Return the role of a user, or None if not found."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT role FROM users WHERE username = ?", (username.lower(),)
-        ).fetchone()
-    return row[0] if row else None
-
-
-def add_user(username: str, password: str, role: str = "teacher") -> None:
-    """Insert a new user with a bcrypt-hashed password."""
-    hashed = _hash_password(password)
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username.lower(), hashed, role),
-        )
-        conn.commit()
-
-    return row[0] if row else None
-
-
-def get_or_create_sso_user(email: str) -> str:
-    """Return the role of an SSO user, creating them as a teacher if they don't exist."""
-    role = get_user_role(email)
-    if role:
-        return role
-        
-    # Generate a random password since they authenticate via SSO
-    import secrets
-    random_password = secrets.token_urlsafe(32)
-    add_user(email, random_password, "teacher")
-    return "teacher"
-
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT role FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            return row[0] if row else None
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve user role: {e}") from e
 
 
 def add_user(username: str, password: str, role: str = "teacher") -> None:
@@ -206,66 +154,94 @@ def add_user(username: str, password: str, role: str = "teacher") -> None:
                 (username, hashed, role),
             )
             conn.commit()
+    except sqlite3.IntegrityError as e:
+        raise ValueError(f"Username '{username}' already exists.") from e
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to add user: {e}") from e
     finally:
         password = "REDACTED"
 
 
-    except sqlite3.IntegrityError as e:
-        conn.rollback()
-        raise ValueError(f"Username '{username}' already exists.") from e
-
-    except sqlite3.Error as e:
-        conn.rollback()
-        raise sqlite3.Error(f"Failed to add user: {e}") from e
-
-    finally:
-        conn.close()
-
-
 def get_all_users() -> list:
     """Return all users as a list of dicts (excludes password hashes)."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, username, role FROM users ORDER BY id"
-        ).fetchall()
-    return [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id, username, role FROM users ORDER BY id"
+            ).fetchall()
+            return [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve users: {e}") from e
 
 
 def delete_user(username: str) -> None:
     """Delete a user by username."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM users WHERE username = ?", (username.lower(),))
-        conn.commit()
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            conn.execute(
+                "DELETE FROM users WHERE username = ?",
+                (username,),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to delete user: {e}") from e
 
 
 def update_password(username: str, new_password: str) -> None:
     """Update a user's password with a new bcrypt hash."""
-    hashed = _hash_password(new_password)
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE users SET password = ? WHERE username = ?",
-            (hashed, username.lower()),
-        )
-        conn.commit()
+    try:
+        username = _validate_username(username)
+        new_password = _validate_password(new_password)
+
+        with _connect() as conn:
+            # Optimized check using COUNT(1) for #185
+            cursor = conn.execute(
+                "SELECT COUNT(1) FROM users WHERE username = ?",
+                (username,),
+            )
+            if cursor.fetchone()[0] == 0:
+                raise ValueError("User not found.")
+
+            hashed = _hash_password(new_password)
+            conn.execute(
+                "UPDATE users SET password = ? WHERE username = ?",
+                (hashed, username),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to update password: {e}") from e
+    finally:
+        new_password = "REDACTED"
 
 
 def get_tour_completed(username: str) -> bool:
     """Return whether a user has completed the onboarding tour."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT tour_completed FROM users WHERE username = ?", (username.lower(),)
-        ).fetchone()
-    return bool(row[0]) if row else False
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT tour_completed FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            return bool(row[0]) if row else False
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to retrieve tour status: {e}") from e
 
 
 def set_tour_completed(username: str, completed: bool = True) -> None:
     """Mark a user as having completed the onboarding tour."""
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE users SET tour_completed = ? WHERE username = ?",
-            (1 if completed else 0, username.lower()),
-        )
-        conn.commit()
+    try:
+        username = _validate_username(username)
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE users SET tour_completed = ? WHERE username = ?",
+                (1 if completed else 0, username),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        raise sqlite3.Error(f"Failed to update tour status: {e}") from e
+
 
 def get_2fa_status(username: str) -> tuple[bool, str | None]:
     """Return (two_factor_enabled, otp_secret) for a user."""
@@ -301,18 +277,22 @@ def disable_2fa(username: str) -> None:
 
 def check_login_rate_limit(username: str) -> tuple[bool, str | None]:
     """Check if username is rate limited. Returns (is_allowed, error_message)."""
-    from src.utils.redis_cache import is_login_locked_out, get_login_attempts
-    
+    from src.utils.redis_cache import get_login_attempts, is_login_locked_out
+
     identifier = username.lower()
     if is_login_locked_out(identifier):
         attempts = get_login_attempts(identifier)
-        return False, f"Account locked due to too many failed attempts. Please try again in 15 minutes. ({attempts}/5 attempts)"
+        return (
+            False,
+            f"Account locked due to too many failed attempts. Please try again in 15 minutes. ({attempts}/5 attempts)",
+        )
     return True, None
 
 
 def record_failed_login(username: str) -> None:
     """Record a failed login attempt for rate limiting."""
     from src.utils.redis_cache import increment_login_attempts
+
     identifier = username.lower()
     increment_login_attempts(identifier)
 
@@ -320,6 +300,7 @@ def record_failed_login(username: str) -> None:
 def clear_login_attempts(username: str) -> None:
     """Clear failed login attempts after successful login."""
     from src.utils.redis_cache import clear_login_attempts as redis_clear_login_attempts
+
     identifier = username.lower()
     redis_clear_login_attempts(identifier)
 
@@ -358,20 +339,20 @@ def update_user_preferences(username: str, preferences: dict) -> None:
 def get_or_create_sso_user(email: str, default_role: str = "teacher") -> str:
     """Finds a user by email (as username) or creates a new one for SSO."""
     username = _validate_username(email)
-    
+
     with _connect() as conn:
         row = conn.execute(
             "SELECT role FROM users WHERE username = ?",
             (username,),
         ).fetchone()
-        
+
         if row:
             return row[0]
-            
+
         # Create user with dummy password
         hashed = _hash_password("!")
         role = _validate_role(default_role)
-        
+
         conn.execute(
             "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
             (username, hashed, role),

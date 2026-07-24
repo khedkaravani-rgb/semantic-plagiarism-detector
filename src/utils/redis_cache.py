@@ -14,7 +14,10 @@ try:
     import redis
 except ImportError:
     redis = None
+import logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -76,9 +79,9 @@ class RedisCache:
                 )
             # Test connection
             self._client.ping()
-            print(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            logger.info(f"[RedisCache] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
         except (AttributeError, redis.ConnectionError, redis.TimeoutError) as e:
-            print(f"[RedisCache] Redis connection failed: {e}. Running without cache.")
+            logger.warning(f"[RedisCache] Redis connection failed: {e}. Running without cache.")
             self._client = None
 
     def is_available(self) -> bool:
@@ -90,6 +93,24 @@ class RedisCache:
             return True
         except Exception:
             return False
+
+    def ping(self) -> tuple[bool, float | None]:
+        """Ping Redis and measure round-trip latency.
+
+        Returns:
+            Tuple of (connected: bool, latency_ms: float | None).
+            latency_ms is None if the connection is unavailable.
+        """
+        if self._client is None:
+            return False, None
+        try:
+            import time
+            start = time.monotonic()
+            self._client.ping()
+            elapsed = (time.monotonic() - start) * 1000
+            return True, round(elapsed, 1)
+        except Exception:
+            return False, None
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Store a value in Redis with optional TTL."""
@@ -104,7 +125,7 @@ class RedisCache:
                 self._client.set(key, serialized)
             return True
         except (RedisError, pickle.PickleError) as e:
-            print(f"[RedisCache] Error setting key {key}: {e}")
+            logger.error(f"[RedisCache] Error setting key {key}: {e}")
             return False
 
     def get(self, key: str) -> Optional[Any]:
@@ -118,7 +139,7 @@ class RedisCache:
                 return None
             return pickle.loads(data)
         except (RedisError, pickle.PickleError) as e:
-            print(f"[RedisCache] Error getting key {key}: {e}")
+            logger.error(f"[RedisCache] Error getting key {key}: {e}")
             return None
 
     def delete(self, key: str) -> bool:
@@ -130,7 +151,7 @@ class RedisCache:
             self._client.delete(key)
             return True
         except RedisError as e:
-            print(f"[RedisCache] Error deleting key {key}: {e}")
+            logger.error(f"[RedisCache] Error deleting key {key}: {e}")
             return False
 
     def set_json(self, key: str, value: dict, ttl: Optional[int] = None) -> bool:
@@ -146,7 +167,7 @@ class RedisCache:
                 self._client.set(key, serialized)
             return True
         except (RedisError, json.JSONDecodeError) as e:
-            print(f"[RedisCache] Error setting JSON key {key}: {e}")
+            logger.error(f"[RedisCache] Error setting JSON key {key}: {e}")
             return False
 
     def get_json(self, key: str) -> Optional[dict]:
@@ -160,7 +181,7 @@ class RedisCache:
                 return None
             return json.loads(data)
         except (RedisError, json.JSONDecodeError) as e:
-            print(f"[RedisCache] Error getting JSON key {key}: {e}")
+            logger.error(f"[RedisCache] Error getting JSON key {key}: {e}")
             return None
 
     def exists(self, key: str) -> bool:
@@ -171,7 +192,7 @@ class RedisCache:
         try:
             return bool(self._client.exists(key))
         except RedisError as e:
-            print(f"[RedisCache] Error checking key {key}: {e}")
+            logger.error(f"[RedisCache] Error checking key {key}: {e}")
             return False
 
     def clear_pattern(self, pattern: str) -> int:
@@ -185,7 +206,7 @@ class RedisCache:
                 return self._client.delete(*keys)
             return 0
         except RedisError as e:
-            print(f"[RedisCache] Error clearing pattern {pattern}: {e}")
+            logger.error(f"[RedisCache] Error clearing pattern {pattern}: {e}")
             return 0
 
 

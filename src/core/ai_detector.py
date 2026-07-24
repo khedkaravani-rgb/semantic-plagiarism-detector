@@ -8,7 +8,11 @@ import os
 from typing import Any, Dict, List
 
 import numpy as np
+
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 _model = None
 _tokenizer = None
@@ -27,7 +31,7 @@ def _get_model_and_tokenizer():
 
     if _model is None or _tokenizer is None:
         model_name = _get_model_name()
-        print(f"[ai_detector] Loading model: {model_name} …")
+        logger.info(f"[ai_detector] Loading model: {model_name} …")
 
         try:
             from transformers import (
@@ -40,10 +44,10 @@ def _get_model_and_tokenizer():
                 model_name
             )
 
-            print("[ai_detector] Model loaded successfully.")
+            logger.info("[ai_detector] Model loaded successfully.")
 
         except Exception as err:
-            print(
+            logger.warning(
                 "[ai_detector] Warning: Could not load transformer model "
                 f"({err}). Using fallback mode."
             )
@@ -54,6 +58,8 @@ def _get_model_and_tokenizer():
     return _model, _tokenizer
 
 
+def detect_ai_probability_batch(texts: List[str], batch_size: int = 8) -> List[float]:
+    """Detects AI generated text probabilities for a batch of strings."""
 def detect_ai_probability_batch(
     texts: List[str],
     batch_size: int = 8,
@@ -133,7 +139,7 @@ def detect_ai_probability_batch(
                 probabilities[index] = float(probability)
 
         except Exception as err:
-            print(
+            logger.warning(
                 f"[ai_detector] Warning: Failed to process batch "
                 f"starting at index {i}: {err}"
             )
@@ -161,6 +167,7 @@ def detect_ai_probability(text: str) -> float:
 
 
 def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
+    """Calculates AI generated text statistics for a single document's chunks."""
     """
     Calculate AI-generated text statistics for a single document's chunks.
 
@@ -196,6 +203,9 @@ def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
 
 
 def detect_documents_ai_probability(
+    chunked_docs: Dict[str, List[str]]
+) -> Dict[str, Dict[str, Any]]:
+    """Calculates AI generated probabilities across multiple documents."""
     chunked_docs: Dict[str, List[str]],
 ) -> Dict[str, Dict[str, Any]]:
     """

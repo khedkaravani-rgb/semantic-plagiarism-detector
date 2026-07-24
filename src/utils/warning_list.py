@@ -260,6 +260,7 @@ def render_warning_controls(
 
     sorted_flags, current_page = prepare_warning_page(
         display_flags,
+        display_flags,  
         search_query=search_query,
         primary_field=SORT_FIELDS[primary_label],
         primary_descending=primary_direction == "Descending",
@@ -297,9 +298,10 @@ def render_warning_controls(
             "The following document pairs have been flagged for high or medium similarity:\n",
         ]
         for idx, flag in enumerate(summary_flags, 1):
+            matched_words = flag.get('matched_length', 0)
             markdown_lines.append(
                 f"{idx}. **{flag['doc_a']}** ↔ **{flag['doc_b']}** — "
-                f"**Similarity:** `{flag['similarity'] * 100:.1f}%` | "
+                f"**Similarity:** `{flag['similarity'] * 100:.1f}%` ({matched_words} words matched) | "
                 f"**Severity:** `{flag['severity']}`"
             )
         markdown_text = "\n".join(markdown_lines)
@@ -407,9 +409,13 @@ def render_warning_controls(
                     )
                 else:
                     st.markdown(f"**{flag['doc_a']}** ↔ **{flag['doc_b']}**")
+                
+                # Replaced the standard similarity text with your matched length display logic
+                matched_words = flag.get('matched_length', 0)
+                display_text = f"[{flag['similarity'] * 100:.1f}% Similarity | {matched_words} words matched]"
                 st.progress(
                     min(1.0, max(0.0, float(flag["similarity"]))),
-                    text=f"Similarity: {flag['similarity'] * 100:.1f}%",
+                    text=display_text,
                 )
 
                 # Display AI probabilities if available
@@ -433,7 +439,6 @@ def render_warning_controls(
 
     if current_page.total_items == 0:
         return
-
     prev_col, page_col, next_col = st.columns([1, 2, 1])
 
     with prev_col:

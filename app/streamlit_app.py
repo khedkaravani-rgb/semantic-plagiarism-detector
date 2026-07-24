@@ -78,6 +78,7 @@ from src.core.document_parser import (
     remove_ignore_phrases,
 )
 from src.core.embedding_model import embed_chunks, embed_documents
+from src.core.concurrency import faiss_write_lock
 from src.core.faiss_index import (
     build_index,
     build_index_from_matrix,

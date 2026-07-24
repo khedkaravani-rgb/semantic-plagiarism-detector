@@ -72,7 +72,7 @@ def test_extract_from_pdf_filters_repeated_headers_page_numbers_and_whitespace()
     fake_pdf.__exit__ = MagicMock(return_value=False)
 
     with patch("src.core.document_parser.pdfplumber.open", return_value=fake_pdf):
-        result = extract_text_from_pdf(io.BytesIO(b"fake-pdf"))
+        result = extract_text_from_pdf(io.BytesIO(b"%PDF-fake-pdf"))
 
     # Repeated header across all pages must be stripped
     assert "Research Report" not in result

@@ -26,6 +26,10 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     plotly_events = None
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
@@ -303,6 +307,7 @@ if not st.session_state.get("authenticated", False):
                             cache_session_state(
                                 SESSION_ID, "last_interaction", time.time()
                             )
+                            st.success(f"Welcome back, {role.capitalize()}!")
                             st.success(f"✅ Welcome back, {role.capitalize()}!")
                             st.rerun()
                 else:
@@ -364,7 +369,7 @@ def clear_all_dialog():
                 try:
                     os.remove(_INDEX_PATH)
                 except Exception as e:
-                    print(f"Error removing FAISS index: {e}")
+                    logger.error(f"Error removing FAISS index: {e}")
 
             try:
                 from src.utils.redis_cache import get_cache
@@ -373,7 +378,7 @@ def clear_all_dialog():
                     cache.delete("faiss:index:corpus_index")
                     cache.clear_pattern("analysis:*")
             except Exception as e:
-                print(f"Error invalidating cache: {e}")
+                logger.error(f"Error invalidating cache: {e}")
 
             if "analysis_results" in st.session_state:
                 st.session_state.analysis_results = None
@@ -798,7 +803,7 @@ else:
             registry = get_chunk_registry()
             st.info(f"📂 Loaded FAISS index from Redis cache with {faiss_index.ntotal} vectors")
         except Exception as e:
-            print(f"[Redis] Error loading cached index: {e}, falling back to disk")
+            logger.warning(f"[Redis] Error loading cached index: {e}, falling back to disk")
 
     if faiss_index is None:
         try:
@@ -893,7 +898,7 @@ else:
                 ai_probs,
             )
         except Exception as err:
-            print(f"Error rebuilding analysis results from DB: {err}")
+            logger.error(f"Error rebuilding analysis results from DB: {err}")
             return None
 
     if (
@@ -914,6 +919,7 @@ else:
             st.session_state.analysis_file_signature = cached_signature
 
 
+    # 1. LOCAL FILE UPLOADER (Dynamic Title Translation)
     # 1. LOCAL FILE UPLOADER
     uploaded_files = st.file_uploader(
         get_text("upload_title", lang=lang_code),
@@ -1571,6 +1577,7 @@ else:
                 title="Interactive Document Plagiarism Network",
             )
 
+            if plotly_events is not None:
             if plotly_events:
                 selected_points = plotly_events(
                         network_fig,
@@ -1578,6 +1585,66 @@ else:
                         hover_event=False,
                         select_event=False,
                         key="plagiarism_network",
+                )
+
+                if selected_points:
+                   clicked_point = selected_points[0]
+
+                   point_index = clicked_point.get("pointIndex")
+
+                   if point_index is not None and 0 <= point_index < len(doc_names):
+                        clicked_document_id = doc_names[point_index]
+
+                        st.session_state.selected_document_id = clicked_document_id
+            else:
+                st.plotly_chart(network_fig, use_container_width=True)
+
+                   
+            selected_document_id = st.session_state.get(
+                "selected_document_id"
+     )
+
+
+            if selected_document_id:
+                filtered_flags = [
+                    flag
+                    for flag in flags
+                        if (
+                            flag["doc_a"] == selected_document_id
+                            or flag["doc_b"] == selected_document_id
+                        )
+                ]
+            else:
+                filtered_flags=flags
+
+          
+
+
+   # ── Summary Metrics ───────────────────────────────────────────────────────────
+
+    if len(file_bytes_dict) < 2:
+        st.markdown(
+            empty_state_html(
+                "Waiting for Files",
+                "Please upload at least 2 PDF, DOCX, or TXT assignments to begin analysis.",
+                "📂",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
+    if "sent_alerts" not in st.session_state:
+        st.session_state.sent_alerts = set()
+
+
+    for flag in filtered_flags:
+        alert_key = (flag["doc_a"], flag["doc_b"])
+        if alert_key not in st.session_state.sent_alerts:
+            try:
+                send_plagiarism_alert(
+                    doc_a=flag["doc_a"],
+                    doc_b=flag["doc_b"],
+                    similarity=float(flag["similarity"]),
                 )
 
                 if selected_points:

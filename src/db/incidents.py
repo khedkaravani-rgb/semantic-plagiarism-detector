@@ -9,13 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from src.db.migrations import migrate_corpus_database
-
 from src.core.config import (
     normalize_score,
     normalize_severity_label,
     severity_from_score,
 )
+from src.db.migrations import migrate_corpus_database
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "corpus.db"
 VALID_REVIEW_STATUSES = {"Pending", "Resolved"}
@@ -157,8 +156,6 @@ def sync_flagged_incidents(
             raise sqlite3.Error(f"Failed to synchronize incidents: {e}") from e
 
 
-
-
 def get_all_incidents(
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
@@ -236,7 +233,7 @@ def get_high_severity_trends(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT 
+            SELECT
                 DATE(date_flagged) as date,
                 COUNT(*) as count
             FROM plagiarism_incidents
@@ -263,7 +260,7 @@ def get_most_plagiarized_documents(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT 
+            SELECT
                 document_name,
                 COUNT(*) as incident_count
             FROM (

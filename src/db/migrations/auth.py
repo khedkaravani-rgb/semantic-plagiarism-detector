@@ -6,7 +6,6 @@ import sqlite3
 
 from .common import column_exists, run_migrations
 
-
 AUTH_SCHEMA_VERSION = 5
 
 
@@ -44,9 +43,7 @@ def migration_003_add_two_factor_fields(
 ) -> None:
     """Add optional TOTP secret and enablement fields."""
     if not column_exists(connection, "users", "otp_secret"):
-        connection.execute(
-            "ALTER TABLE users ADD COLUMN otp_secret TEXT DEFAULT NULL"
-        )
+        connection.execute("ALTER TABLE users ADD COLUMN otp_secret TEXT DEFAULT NULL")
 
     if not column_exists(connection, "users", "two_factor_enabled"):
         connection.execute(
@@ -55,6 +52,7 @@ def migration_003_add_two_factor_fields(
             ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0
             """
         )
+
 
 def migration_005_add_preferences(db_cursor):
     db_cursor.execute("ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT '{}'")

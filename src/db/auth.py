@@ -19,9 +19,10 @@ record_failed_login(username)      → None
 clear_login_attempts(username)     → None
 """
 
+import json
 import os
 import sqlite3
-import json
+
 import bcrypt
 
 from src.db.migrations import migrate_auth_database
@@ -251,18 +252,22 @@ def disable_2fa(username: str) -> None:
 
 def check_login_rate_limit(username: str) -> tuple[bool, str | None]:
     """Check if username is rate limited. Returns (is_allowed, error_message)."""
-    from src.utils.redis_cache import is_login_locked_out, get_login_attempts
-    
+    from src.utils.redis_cache import get_login_attempts, is_login_locked_out
+
     identifier = username.lower()
     if is_login_locked_out(identifier):
         attempts = get_login_attempts(identifier)
-        return False, f"Account locked due to too many failed attempts. Please try again in 15 minutes. ({attempts}/5 attempts)"
+        return (
+            False,
+            f"Account locked due to too many failed attempts. Please try again in 15 minutes. ({attempts}/5 attempts)",
+        )
     return True, None
 
 
 def record_failed_login(username: str) -> None:
     """Record a failed login attempt for rate limiting."""
     from src.utils.redis_cache import increment_login_attempts
+
     identifier = username.lower()
     increment_login_attempts(identifier)
 
@@ -270,8 +275,10 @@ def record_failed_login(username: str) -> None:
 def clear_login_attempts(username: str) -> None:
     """Clear failed login attempts after successful login."""
     from src.utils.redis_cache import clear_login_attempts as redis_clear_login_attempts
+
     identifier = username.lower()
     redis_clear_login_attempts(identifier)
+
 
 def get_user_preferences(username: str) -> dict:
     """Return user preferences as a dictionary, or empty dict if none exist."""

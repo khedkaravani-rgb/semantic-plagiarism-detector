@@ -22,13 +22,13 @@ from src.core.config import (
     severity_from_score,
 )
 
-
 # ── Validation helpers ─────────────────────────────────────────────────────────
 
 
 def _validated_batch_size(batch_size: Optional[int]) -> Optional[int]:
     """Return a safe integer batch size or None for unbatched execution."""
     from src.errors import SIM_BATCH_SIZE_INVALID
+
     if batch_size is None:
         return None
     if isinstance(batch_size, bool):
@@ -119,14 +119,19 @@ def hybrid_similarity_matrix(
     """
     if not (0.0 <= w <= 1.0):
         from src.errors import SIM_WEIGHT_OUT_OF_RANGE
+
         raise ValueError(SIM_WEIGHT_OUT_OF_RANGE.format(w=w))
 
     # Ensure both DataFrames have the same shape and index/columns
     if semantic_df.shape != lexical_df.shape:
         from src.errors import SIM_SHAPE_MISMATCH
+
         raise ValueError(SIM_SHAPE_MISMATCH)
-    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(lexical_df.columns):
+    if not semantic_df.index.equals(lexical_df.index) or not semantic_df.columns.equals(
+        lexical_df.columns
+    ):
         from src.errors import SIM_INDEX_MISMATCH
+
         raise ValueError(SIM_INDEX_MISMATCH)
 
     hybrid_df = w * semantic_df + (1 - w) * lexical_df

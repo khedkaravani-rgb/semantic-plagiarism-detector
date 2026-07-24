@@ -105,7 +105,7 @@ def detect_document_ai_probability(chunks: List[str]) -> Dict[str, Any]:
 
 
 def detect_documents_ai_probability(
-    chunked_docs: Dict[str, List[str]]
+    chunked_docs: Dict[str, List[str]],
 ) -> Dict[str, Dict[str, Any]]:
     """Calculates AI generated probabilities across multiple documents."""
     results = {}

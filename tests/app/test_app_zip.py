@@ -2,9 +2,10 @@ import io
 import os
 import sys
 import zipfile
-import pytest
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock
+import pytest
 from streamlit.testing.v1 import AppTest
 
 # Mock googleapiclient modules to avoid ModuleNotFoundError in environments without them installed
@@ -43,6 +44,7 @@ def mock_embed_chunks(chunks, batch_size=64):
 @pytest.fixture(autouse=True)
 def clean_test_env():
     from src.db.corpus_db import clear_all_data
+
     clear_all_data()
     index_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "corpus.index")
@@ -61,7 +63,13 @@ def clean_test_env():
             pass
 
 
-@patch("src.core.ai_detector.detect_documents_ai_probability", return_value={"assignment1.txt": {"overall": 0.1}, "assignment2.txt": {"overall": 0.1}})
+@patch(
+    "src.core.ai_detector.detect_documents_ai_probability",
+    return_value={
+        "assignment1.txt": {"overall": 0.1},
+        "assignment2.txt": {"overall": 0.1},
+    },
+)
 @patch("src.core.webhook.send_plagiarism_alert")
 @patch(
     "src.core.embedding_model.get_embedding_model_info",
@@ -90,8 +98,14 @@ def test_app_zip_upload_integration(mock_embed, mock_model_info, mock_webhook, m
         # Construct a ZIP archive in memory containing two text files
         zip_stream = io.BytesIO()
         with zipfile.ZipFile(zip_stream, "w") as zf:
-            zf.writestr("assignment1.txt", b"First student assignment text for similarity checking.")
-            zf.writestr("assignment2.txt", b"Second student assignment text for similarity checking.")
+            zf.writestr(
+                "assignment1.txt",
+                b"First student assignment text for similarity checking.",
+            )
+            zf.writestr(
+                "assignment2.txt",
+                b"Second student assignment text for similarity checking.",
+            )
         zip_bytes = zip_stream.getvalue()
 
         # Upload the ZIP via the file uploader widget

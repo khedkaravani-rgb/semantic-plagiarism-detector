@@ -24,9 +24,9 @@ import pathlib
 import shutil
 import sys
 import types
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 # ── Repository Root Path Bootstrap ────────────────────────────────────────────
 # Resolve the repository root (two levels up from this conftest.py file) and
@@ -49,7 +49,6 @@ if "sentence_transformers" not in sys.modules:
 # will be gracefully skipped on machines that don't have Tesseract installed
 # (e.g. local developer machines, basic CI environments).
 TESSERACT_AVAILABLE = shutil.which("tesseract") is not None
-
 
 
 @pytest.fixture

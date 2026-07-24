@@ -5,7 +5,7 @@ from typing import Dict
 
 # Safety limits for ZIP bomb protection
 MAX_TOTAL_DECOMPRESSED_SIZE = 200 * 1024 * 1024  # 200 MB
-MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024        # 100 MB
+MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 def process_zip_file(zip_bytes: bytes) -> Dict[str, bytes]:
@@ -55,14 +55,20 @@ def process_zip_file(zip_bytes: bytes) -> Dict[str, bytes]:
 
                 # Check for encryption
                 if zip_info.flag_bits & 0x1:
-                    raise ValueError("Password-protected or encrypted ZIP files are not supported.")
+                    raise ValueError(
+                        "Password-protected or encrypted ZIP files are not supported."
+                    )
 
                 # Normalize filename slashes (Windows to Unix format)
                 filename = zip_info.filename.replace("\\", "/")
 
                 # Path Traversal Protection: Skip malicious path traversal targets
                 parts = filename.split("/")
-                if ".." in parts or any(p.startswith("..") for p in parts) or filename.startswith("/"):
+                if (
+                    ".." in parts
+                    or any(p.startswith("..") for p in parts)
+                    or filename.startswith("/")
+                ):
                     continue
 
                 # Filter by supported document extensions
@@ -75,7 +81,9 @@ def process_zip_file(zip_bytes: bytes) -> Dict[str, bytes]:
                 try:
                     file_data = zf.read(zip_info)
                 except (zipfile.BadZipFile, RuntimeError) as e:
-                    raise ValueError(f"Corrupted or protected entry: {zip_info.filename}") from e
+                    raise ValueError(
+                        f"Corrupted or protected entry: {zip_info.filename}"
+                    ) from e
 
                 # Skip empty files
                 if not file_data:

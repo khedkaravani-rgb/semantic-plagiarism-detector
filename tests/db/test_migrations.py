@@ -130,9 +130,7 @@ def test_old_corpus_database_migrates_without_data_loss(tmp_path):
             None,
         )
 
-        chunk = connection.execute(
-            "SELECT filename, chunk_text FROM chunks"
-        ).fetchone()
+        chunk = connection.execute("SELECT filename, chunk_text FROM chunks").fetchone()
         assert chunk == ("legacy.pdf", "legacy text")
         assert get_user_version(connection) == CORPUS_SCHEMA_VERSION
 
@@ -236,9 +234,7 @@ def test_failed_migration_rolls_back_schema_data_and_version():
 
     def migration_one(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE TABLE preserved_test (value TEXT)")
-        conn.execute(
-            "INSERT INTO preserved_test (value) VALUES ('temporary')"
-        )
+        conn.execute("INSERT INTO preserved_test (value) VALUES ('temporary')")
 
     def migration_two(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE TABLE should_rollback (id INTEGER)")

@@ -6,7 +6,6 @@ import sqlite3
 
 from .common import column_exists, run_migrations
 
-
 CORPUS_SCHEMA_VERSION = 4
 
 
@@ -50,9 +49,7 @@ def migration_002_add_document_metadata(
         "assignment_title",
     ):
         if not column_exists(connection, "documents", column_name):
-            connection.execute(
-                f'ALTER TABLE documents ADD COLUMN "{column_name}" TEXT'
-            )
+            connection.execute(f'ALTER TABLE documents ADD COLUMN "{column_name}" TEXT')
 
 
 def migration_003_add_required_indexes(

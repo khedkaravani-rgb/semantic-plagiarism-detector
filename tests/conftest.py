@@ -125,3 +125,32 @@ def mock_factory():
 def mock_embed_chunks():
     """Provides a direct reference to the embed_chunks factory method."""
     return MockDataFactory.embed_chunks
+
+@pytest.fixture
+def mock_db(tmp_path):
+    """
+    Provides an isolated, empty, and writable SQLite database schema for tests.
+    Patches the global database paths in src.db modules to use a temporary file.
+    Ensures safe teardown and no interference with production databases.
+    """
+    db_file = tmp_path / "test_isolated.db"
+    
+    # We patch the database path at the module level for all db modules
+    import unittest.mock
+    
+    with unittest.mock.patch("src.db.corpus_db._DB_PATH", str(db_file)), \
+         unittest.mock.patch("src.db.incidents.DEFAULT_DB_PATH", str(db_file)), \
+         unittest.mock.patch("src.db.auth._DB_PATH", str(db_file)):
+        
+        # Initialize schemas
+        try:
+            from src.db.corpus_db import init_corpus_db
+            from src.db.incidents import init_incidents_db
+            from src.db.auth import init_auth_db
+            init_corpus_db()
+            init_incidents_db()
+            init_auth_db()
+        except ImportError:
+            pass
+            
+        yield str(db_file)

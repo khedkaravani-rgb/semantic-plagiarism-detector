@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 from collections import Counter
@@ -13,6 +14,8 @@ from urllib.parse import urlparse
 import docx
 import pdfplumber
 from langdetect import LangDetectException, detect
+
+logger = logging.getLogger(__name__)
 
 from src.core.translator import translate_text
 
@@ -387,7 +390,7 @@ def _parse_pdf_page(
     except OCRDependencyError:
         raise
     except Exception as exc:
-        print(f"[document_parser] Error parsing page {page_index}: {exc}")
+        logger.error(f"[document_parser] Error parsing page {page_index}: {exc}")
         return []
 
 
@@ -458,7 +461,7 @@ def extract_texts_parallel(
 
         return results, errors
     except Exception as exc:
-        print(
+        logger.warning(
             f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential extraction..."
         )
         results.clear()
@@ -492,7 +495,7 @@ def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
             metadata["creation_date"] = doc_metadata.get("creationDate")
             metadata["title"] = doc_metadata.get("title")
     except Exception as exc:
-        print(f"[document_parser] Error extracting PDF metadata: {exc}")
+        logger.error(f"[document_parser] Error extracting PDF metadata: {exc}")
 
     return metadata
 
@@ -515,13 +518,32 @@ def extract_text_from_pdf(
     )
 
     pdf_bytes = _read_pdf_bytes(file)
+
+    # Validate actual file magic bytes to prevent renamed malicious files (Issue #252)
+    try:
+        import magic
+
+        mime_type = magic.from_buffer(pdf_bytes, mime=True)
+        if mime_type != "application/pdf":
+            logger.warning(
+                f"[document_parser] Security warning: Invalid MIME type '{mime_type}' for PDF."
+            )
+            return ""
+    except ImportError:
+        # Fallback manual magic byte check if python-magic is not installed
+        if not pdf_bytes.lstrip().startswith(b"%PDF-"):
+            logger.warning(
+                "[document_parser] Security warning: Invalid magic bytes for PDF."
+            )
+            return ""
+
     page_lines: List[List[str]] = []
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             num_pages = len(pdf.pages)
     except Exception as exc:
-        print(f"[document_parser] Error reading PDF: {exc}")
+        logger.error(f"[document_parser] Error reading PDF: {exc}")
         return ""
 
     if num_pages == 0:
@@ -548,7 +570,7 @@ def extract_text_from_pdf(
         except OCRDependencyError:
             raise
         except Exception as exc:
-            print(
+            logger.warning(
                 f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential page parsing..."
             )
             page_lines = [
@@ -586,7 +608,7 @@ def extract_text_from_docx(file: PDFInput) -> str:
         document = docx.Document(doc_file)
         text = "\n\n".join(paragraph.text for paragraph in document.paragraphs)
     except Exception as exc:
-        print(f"[document_parser] Error reading DOCX: {exc}")
+        logger.error(f"[document_parser] Error reading DOCX: {exc}")
     return text.strip()
 
 
@@ -607,7 +629,7 @@ def extract_text_from_txt(file: PDFInput) -> str:
                 else data
             )
     except Exception as exc:
-        print(f"[document_parser] Error reading TXT: {exc}")
+        logger.error(f"[document_parser] Error reading TXT: {exc}")
     return text.strip()
 
 
@@ -772,7 +794,7 @@ def extract_text_from_epub(file: PDFInput) -> str:
         return "\n\n".join(text_parts).strip()
 
     except Exception as exc:
-        print(f"[document_parser] Error reading EPUB: {exc}")
+        logger.error(f"[document_parser] Error reading EPUB: {exc}")
         return ""
 
 
@@ -836,7 +858,7 @@ def extract_texts(files: list) -> Dict[str, str]:
         try:
             files_dict[name] = _read_pdf_bytes(file)
         except Exception as exc:
-            print(f"[document_parser] Error reading file data for {name}: {exc}")
+            logger.error(f"[document_parser] Error reading file data for {name}: {exc}")
             files_dict[name] = b""
 
     raw_texts, errors = extract_texts_parallel(files_dict)

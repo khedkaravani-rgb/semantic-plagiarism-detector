@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 from src.core.translator import translate_text
 
+
 # OCR dependencies are imported lazily so TXT/DOCX and normal text PDFs still
 # work even when Tesseract is not installed on the machine.
 PDFInput = Union[str, bytes, io.BytesIO, BinaryIO]
@@ -121,6 +122,19 @@ def strip_bibliography(text: str) -> str:
     return text
 
 
+def clean_text(raw_text: str) -> str:
+    """Normalize whitespace and remove unwanted Unicode characters."""
+    text = raw_text
+    text = re.sub(r"\n\s*\n\s*\n", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"[\u00a0\u200b]", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+
+    return text.strip()
+
+
 def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
     """Remove specified ignore phrases from text.
 
@@ -146,9 +160,7 @@ def remove_ignore_phrases(text: str, ignore_phrases: str) -> str:
         result = result.replace(phrase, "")
 
     # Clean up extra whitespace left after removal
-    result = re.sub(r"\n\s*\n\s*\n", "\n\n", result)  # Collapse multiple blank lines
-    result = re.sub(r"[ \t]+", " ", result)  # Collapse multiple spaces
-    result = result.strip()
+    result = clean_text(result)
 
     return result
 
@@ -189,7 +201,7 @@ class OCRDependencyError(RuntimeError):
 
 def _is_page_number(line: str) -> bool:
     """Return True for simple standalone page-number lines."""
-    cleaned = re.sub(r"[\u00a0\u200b]", " ", line).strip()
+    cleaned = clean_text(line)
     if not cleaned:
         return False
     return bool(
@@ -201,7 +213,7 @@ def _clean_page_text(page_text: str) -> List[str]:
     """Clean one page of extracted text."""
     lines: List[str] = []
     for raw_line in page_text.splitlines():
-        cleaned = re.sub(r"[\u00a0\u200b]", " ", raw_line).strip()
+        cleaned = clean_text(raw_line)
         if not cleaned or _is_page_number(cleaned):
             continue
         lines.append(cleaned)
@@ -246,10 +258,8 @@ def _normalize_whitespace(page_lines: List[List[str]]) -> str:
     """Join cleaned lines and collapse excessive whitespace."""
     cleaned_lines = [line for lines in page_lines for line in lines]
     text = "\n".join(cleaned_lines).strip()
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n[ \t]+", "\n", text)
-    return text.strip()
+    text = clean_text(text)
+    return text
 
 
 def _read_pdf_bytes(file: PDFInput) -> bytes:
@@ -798,7 +808,7 @@ def strip_markdown_syntax(raw_text: str) -> str:
         output.append(line)
 
     text = "\n".join(output)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = clean_text(text)
     return text.strip()
 
 

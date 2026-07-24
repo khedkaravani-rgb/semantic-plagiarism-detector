@@ -18,8 +18,9 @@ load_dotenv()
 
 import numpy as np
 import pandas as pd
-from src.security.metadata_stripper import strip_exif_metadata
 import streamlit as st
+
+from src.security.metadata_stripper import strip_exif_metadata
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
@@ -42,10 +43,7 @@ REQUIRED_ENV_VARS = [
     "API_BEARER_TOKEN",
 ]
 
-missing_env_vars = [
-    var for var in REQUIRED_ENV_VARS
-    if not os.getenv(var)
-]
+missing_env_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
 
 if missing_env_vars:
     logger.warning(
@@ -136,6 +134,7 @@ from src.db.incidents import (  # noqa: E402
     get_most_plagiarized_documents,
     sync_flagged_incidents,
 )
+from src.utils.diff_highlighter import highlight_overlap
 from src.utils.excel_export import export_similarity_matrix_to_excel
 from src.utils.pdf_report import highlight_pdf_matches  # noqa: E402
 from src.utils.redis_cache import (
@@ -1038,10 +1037,6 @@ else:
     def load_analysis_results_from_db():
         import numpy as np
         import pandas as pd
-from src.security.metadata_stripper import strip_exif_metadata
-        from sklearn.metrics.pairwise import cosine_similarity
-
-        from src.db.corpus_db import get_all_documents, get_chunk_registry
 
         docs = get_all_documents()
         if not docs:
@@ -1354,7 +1349,10 @@ from src.security.metadata_stripper import strip_exif_metadata
                             )
 
                             if downloaded_dict:
-                                scrubbed_drive = {n: strip_exif_metadata(d, n) for n, d in downloaded_dict.items()}
+                                scrubbed_drive = {
+                                    n: strip_exif_metadata(d, n)
+                                    for n, d in downloaded_dict.items()
+                                }
                                 st.session_state.drive_files_dict.update(scrubbed_drive)
                                 st.success(
                                     f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
@@ -1385,7 +1383,12 @@ from src.security.metadata_stripper import strip_exif_metadata
                             f"⚠️ ZIP file '{f.name}' contains no supported documents (.pdf, .docx, .txt)."
                         )
                     else:
-                        file_bytes_dict.update({name: strip_exif_metadata(data, name) for name, data in zip_files.items()})
+                        file_bytes_dict.update(
+                            {
+                                name: strip_exif_metadata(data, name)
+                                for name, data in zip_files.items()
+                            }
+                        )
                 except ValueError as ve:
                     st.error(f"⚠️ Failed to process ZIP archive '{f.name}': {str(ve)}")
                 except (OSError, RuntimeError, TypeError):
@@ -1412,7 +1415,9 @@ from src.security.metadata_stripper import strip_exif_metadata
                         virtual_filename = (
                             f"{clean_student_name} ({f.name} - Row {idx + 1}).txt"
                         )
-                        file_bytes_dict[virtual_filename] = strip_exif_metadata(str(text_val).encode("utf-8"), virtual_filename)
+                        file_bytes_dict[virtual_filename] = strip_exif_metadata(
+                            str(text_val).encode("utf-8"), virtual_filename
+                        )
             else:
                 file_bytes_dict[f.name] = strip_exif_metadata(f.read(), f.name)
             f.seek(0)
@@ -2028,8 +2033,13 @@ from src.security.metadata_stripper import strip_exif_metadata
                         f"#{rank} — {doc_a} ↔ {doc_b} — {sim:.1%}{badge}",
                         expanded=st.session_state.expand_all_drill or (rank == 1),
                     ):
-                        st.write(f"**{doc_a}:** {ca}")
-                        st.write(f"**{doc_b}:** {cb}")
+                        highlighted_ca, highlighted_cb = highlight_overlap(ca, cb)
+                        st.markdown(
+                            f"**{doc_a}:** {highlighted_ca}", unsafe_allow_html=True
+                        )
+                        st.markdown(
+                            f"**{doc_b}:** {highlighted_cb}", unsafe_allow_html=True
+                        )
 
             with drill_tab_viewer:
                 selected_view_doc = st.radio(
@@ -2083,11 +2093,15 @@ from src.security.metadata_stripper import strip_exif_metadata
         st.subheader("📊 Similarity Score Distribution")
         analysis_results = st.session_state.get("analysis_results")
         if analysis_results is not None:
-            sim_matrix = analysis_results[4] if use_chunk_matrix else analysis_results[3]
+            sim_matrix = (
+                analysis_results[4] if use_chunk_matrix else analysis_results[3]
+            )
             dist_fig = plot_similarity_distribution(sim_matrix)
             st.plotly_chart(dist_fig, use_container_width=True)
         else:
-            st.info("Run a plagiarism analysis to see the similarity score distribution.")
+            st.info(
+                "Run a plagiarism analysis to see the similarity score distribution."
+            )
 
         st.divider()
 

@@ -10,11 +10,11 @@ import os
 import sys
 from io import BytesIO
 
-from src.core.document_parser import extract_text, DEFAULT_OCR_LANGUAGE, DEFAULT_OCR_DPI
-from src.core.text_chunking import chunk_documents
 from src.core.cross_lingual import prepare_text_for_embedding
+from src.core.document_parser import DEFAULT_OCR_DPI, DEFAULT_OCR_LANGUAGE, extract_text
 from src.core.embedding_model import embed_documents
 from src.core.similarity import document_similarity_matrix, flag_plagiarism
+from src.core.text_chunking import chunk_documents
 
 
 def run_scan(folder_path: str, threshold: float) -> int:
@@ -32,7 +32,7 @@ def run_scan(folder_path: str, threshold: float) -> int:
 
     supported_extensions = {".pdf", ".docx", ".txt"}
     files = []
-    
+
     try:
         for entry in os.scandir(folder_path):
             if entry.is_file():
@@ -64,7 +64,9 @@ def run_scan(folder_path: str, threshold: float) -> int:
             if text.strip():
                 raw_texts[filename] = text
             else:
-                sys.stderr.write(f"Warning: Extracted text from '{filename}' is empty.\n")
+                sys.stderr.write(
+                    f"Warning: Extracted text from '{filename}' is empty.\n"
+                )
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse '{filename}': {e}\n")
 
@@ -88,11 +90,13 @@ def run_scan(folder_path: str, threshold: float) -> int:
             flags = flag_plagiarism(sim_df, threshold=threshold)
 
             for flag in flags:
-                matches.append({
-                    "document_1": flag["doc_a"],
-                    "document_2": flag["doc_b"],
-                    "similarity_score": flag["similarity"]
-                })
+                matches.append(
+                    {
+                        "document_1": flag["doc_a"],
+                        "document_2": flag["doc_b"],
+                        "similarity_score": flag["similarity"],
+                    }
+                )
         except Exception as e:
             sys.stderr.write(f"Error during plagiarism detection pipeline: {e}\n")
             return 1
@@ -100,7 +104,7 @@ def run_scan(folder_path: str, threshold: float) -> int:
     report = {
         "documents_processed": num_processed,
         "threshold": threshold,
-        "matches": matches
+        "matches": matches,
     }
 
     print(json.dumps(report, indent=2))

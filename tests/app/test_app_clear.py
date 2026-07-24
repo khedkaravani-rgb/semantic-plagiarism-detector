@@ -9,23 +9,6 @@ _INDEX_PATH = os.path.join(_REPO_ROOT, "corpus.index")
 _DB_PATH = os.path.join(_REPO_ROOT, "corpus.db")
 
 
-@pytest.fixture(autouse=True)
-def clean_test_env():
-    from src.db.corpus_db import clear_all_data
-
-    clear_all_data()
-    if os.path.exists(_INDEX_PATH):
-        try:
-            os.remove(_INDEX_PATH)
-        except Exception:
-            pass
-    yield
-    clear_all_data()
-    if os.path.exists(_INDEX_PATH):
-        try:
-            os.remove(_INDEX_PATH)
-        except Exception:
-            pass
 
 
 def test_clear_all_button_visibility():

@@ -720,13 +720,16 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("### 📁 Document Management")
         existing_docs = get_all_documents()
+        session_uploaded_docs = st.session_state.get("session_uploaded_docs", set())
         if existing_docs:
             st.write(f"**{len(existing_docs)}** documents in database")
             for doc in existing_docs:
                 st.markdown('<div class="doc-row">', unsafe_allow_html=True)
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.text(f"📄 {doc['filename']}")
+                    is_new = doc['filename'] in session_uploaded_docs
+                    badge_html = ' <span style="background-color:#28a745;color:white;font-size:0.7rem;padding:2px 6px;border-radius:4px;font-weight:bold;">NEW</span>' if is_new else ''
+                    st.markdown(f"📄 {doc['filename']}{badge_html}", unsafe_allow_html=True)
                 with col2:
                     if st.button("🗑️", key=f"del_{doc['filename']}"):
                         st.session_state._pending_delete = doc["filename"]
@@ -1668,6 +1671,11 @@ from src.security.metadata_stripper import strip_exif_metadata
                     ai_probabilities,
                 ) = analysis_results
                 st.session_state.analysis_results = analysis_results
+                if "session_uploaded_docs" not in st.session_state:
+                    st.session_state.session_uploaded_docs = set()
+                st.session_state.session_uploaded_docs.update(file_bytes_dict.keys())
+                if url_filename:
+                    st.session_state.session_uploaded_docs.add(url_filename)
         except OCRFileBatchError as exc:
             from src.errors import OCR_DEPENDENCIES_MISSING
 

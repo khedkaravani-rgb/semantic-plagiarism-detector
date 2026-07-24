@@ -1543,6 +1543,7 @@ else:
 
     # ══ TAB 1: WARNINGS ═══════════════════════════════════════════════════════
     with tab_warnings:
+        st.markdown("🏠 Home > Dashboard > **Warnings**")
         st.subheader(get_text("tab_warnings", lang=lang_code))
 
         if selected_document_id:
@@ -1557,6 +1558,7 @@ else:
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
+        st.markdown("🏠 Home > Dashboard > **FAISS Chunk Search**")
         st.subheader("⚡ FAISS Chunk Search")
         st.info(f"Index total: {faiss_index.ntotal if faiss_index else 0} vectors.")
         faiss_query = st.text_input("Query FAISS Index:", placeholder="Type a text snippet to search vector index...", key="faiss_query_input")
@@ -1573,6 +1575,7 @@ else:
 
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
+        st.markdown("🏠 Home > Dashboard > **Similarity Matrix**")
         st.subheader("📋 Similarity Matrix")
         if active_sim_df is None:
             st.info("Please upload documents to generate a similarity matrix.")
@@ -1600,6 +1603,7 @@ else:
 
     # ══ TAB 4: HEATMAP & NETWORK ══════════════════════════════════════════════
     with tab_heatmap:
+        st.markdown("🏠 Home > Dashboard > **Heatmap & Network**")
         st.subheader(get_text("tab_heatmap", lang=lang_code))
         if active_sim_df is None:
             from src.errors import UI_SIMILARITY_MATRIX_REUPLOAD
@@ -1727,6 +1731,7 @@ else:
 
     # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
     with tab_drill:
+        st.markdown("🏠 Home > Dashboard > **Pair Drill-Down**")
         st.subheader("🔬 Pair Drill-Down")
         st.caption("Inspect chunk-level similarity between any two documents.")
 
@@ -1804,6 +1809,7 @@ else:
 
     # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
     with tab_analytics:
+        st.markdown("🏠 Home > Dashboard > **Analytics Dashboard**")
         st.subheader("📊 Plagiarism Analytics Dashboard")
         if flags:
             sync_flagged_incidents(flags)
@@ -1839,6 +1845,7 @@ else:
 
     # ══ TAB 7: User Management ═══════════════════════════════════════════════════
     with tab_users:
+        st.markdown("🏠 Home > Dashboard > **User Management**")
         st.subheader("👥 User Management")
         users = get_all_users()
         if users:

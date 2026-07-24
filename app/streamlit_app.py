@@ -1477,6 +1477,10 @@ from src.security.metadata_stripper import strip_exif_metadata
             "Default Assignment Title", value="Assignment 1"
         )
 
+    col_tags = st.columns(1)[0]
+    with col_tags:
+        batch_tags = st.text_input("Tags (comma separated)", placeholder="#hw1, #draft")
+
     metadata_dict = {}
     for filename in file_bytes_dict.keys():
         # Check if this filename is a virtual CSV document
@@ -1500,6 +1504,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                 "student_name": student_name,
                 "class_section": batch_class.strip(),
                 "assignment_title": batch_assignment.strip(),
+                "tags": batch_tags.strip(),
             }
         else:
             base_name = os.path.splitext(filename)[0]
@@ -1526,6 +1531,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                     "student_name": student_name.strip(),
                     "class_section": class_section.strip(),
                     "assignment_title": assignment_title.strip(),
+                    "tags": batch_tags.strip(),
                 }
 
     if url_filename:
@@ -1549,7 +1555,8 @@ from src.security.metadata_stripper import strip_exif_metadata
                 "student_name": student_name.strip(),
                 "class_section": class_section.strip(),
                 "assignment_title": assignment_title.strip(),
-            }
+                    "tags": batch_tags.strip(),
+                }
 
     @st.cache_data(show_spinner=False)
     def run_pipeline(
@@ -1668,6 +1675,23 @@ from src.security.metadata_stripper import strip_exif_metadata
                     ai_probabilities,
                 ) = analysis_results
                 st.session_state.analysis_results = analysis_results
+
+                # Save metadata to DB
+                from src.db.corpus_db import add_document
+                from src.core.tag_manager import TagManager
+                for filename, meta in metadata_dict.items():
+                    try:
+                        parsed_tags = TagManager.parse_tags(meta.get("tags", ""))
+                        add_document(
+                            filename=filename,
+                            file_hash=filename,
+                            class_section=meta.get("class_section", ""),
+                            student_name=meta.get("student_name", ""),
+                            assignment_title=meta.get("assignment_title", ""),
+                            tags=parsed_tags
+                        )
+                    except Exception:
+                        pass
         except OCRFileBatchError as exc:
             from src.errors import OCR_DEPENDENCIES_MISSING
 
@@ -1697,6 +1721,21 @@ from src.security.metadata_stripper import strip_exif_metadata
         ]
     else:
         filtered_flags = flags
+
+    from src.core.tag_manager import TagManager
+    from src.db.corpus_db import get_document_tags
+    
+    # Fetch tags for filtering
+    active_tag = st.session_state.get("selected_tag", "All Tags")
+    if active_tag != "All Tags":
+        flagged_tags_filtered = []
+        for flag in filtered_flags:
+            tags_a = get_document_tags(flag["doc_a"])
+            tags_b = get_document_tags(flag["doc_b"])
+            # Include if EITHER document has the selected tag
+            if TagManager.has_matching_tag(tags_a, active_tag) or TagManager.has_matching_tag(tags_b, active_tag):
+                flagged_tags_filtered.append(flag)
+        filtered_flags = flagged_tags_filtered
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
     if len(file_bytes_dict) < 2 and url_text is None:

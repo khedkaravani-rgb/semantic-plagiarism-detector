@@ -11,6 +11,9 @@ import io as _io
 import os
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -206,6 +209,35 @@ if last_interaction and st.session_state.get("authenticated", False):
         st.session_state.last_interaction = time.time()
         cache_session_state(SESSION_ID, "last_interaction", time.time())
 
+# ── Handle OAuth Callback (GitHub / Google SSO) ──────────────────────────────
+if not st.session_state.get("authenticated", False):
+    if "code" in st.query_params and "state" in st.query_params:
+        _code = st.query_params["code"]
+        _state = st.query_params["state"]
+        from src.utils.sso import exchange_google_code, exchange_github_code
+        from src.db.auth import get_or_create_sso_user
+        _user_info = None
+        if _state.startswith("google_"):
+            _user_info = exchange_google_code(_code)
+        elif _state.startswith("github_"):
+            _user_info = exchange_github_code(_code)
+        if _user_info and _user_info.get("email"):
+            _email = _user_info["email"]
+            _role = get_or_create_sso_user(_email)
+            st.session_state.authenticated = True
+            st.session_state.username = _email
+            st.session_state.role = _role
+            st.session_state.last_interaction = time.time()
+            cache_session_state(SESSION_ID, "authenticated", True)
+            cache_session_state(SESSION_ID, "username", _email)
+            cache_session_state(SESSION_ID, "role", _role)
+            cache_session_state(SESSION_ID, "last_interaction", time.time())
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.error("🚨 SSO authentication failed. Could not retrieve your email.")
+            st.query_params.clear()
+
 # Render Login UI if not authenticated
 if not st.session_state.get("authenticated", False):
     if st.session_state.get("pending_2fa", False):
@@ -315,6 +347,23 @@ if not st.session_state.get("authenticated", False):
                     record_failed_login(username)
                     from src.errors import AUTH_INVALID_CREDENTIALS
                     st.error(f"🚨 {AUTH_INVALID_CREDENTIALS}")
+
+    # ── SSO Sign-In Options ──────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("<p style='text-align:center;color:#888;font-size:0.85rem;'>or sign in with</p>", unsafe_allow_html=True)
+    _sso_col1, _sso_col2 = st.columns(2)
+    with _sso_col1:
+        if st.button("🐙 Sign in with GitHub", use_container_width=True, key="github_sso_btn"):
+            from src.utils.sso import get_github_auth_url
+            _github_url, _github_state = get_github_auth_url()
+            st.session_state["sso_state"] = _github_state
+            st.markdown(f"<meta http-equiv='refresh' content='0; url={_github_url}'>", unsafe_allow_html=True)
+    with _sso_col2:
+        if st.button("🔵 Sign in with Google", use_container_width=True, key="google_sso_btn"):
+            from src.utils.sso import get_google_auth_url
+            _google_url, _google_state = get_google_auth_url()
+            st.session_state["sso_state"] = _google_state
+            st.markdown(f"<meta http-equiv='refresh' content='0; url={_google_url}'>", unsafe_allow_html=True)
     st.stop()
 
 # Active user role

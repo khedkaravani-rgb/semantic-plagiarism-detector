@@ -106,8 +106,10 @@ from src.db.auth import (
     get_user_preferences,
     get_user_role,
     init_db,
+    is_user_active,
     record_failed_login,
     set_tour_completed,
+    set_user_active_status,
     update_user_preferences,
     verify_user,
 )
@@ -236,17 +238,21 @@ if not st.session_state.get("authenticated", False):
             _user_info = exchange_github_code(_code)
         if _user_info and _user_info.get("email"):
             _email = _user_info["email"]
-            _role = get_or_create_sso_user(_email)
-            st.session_state.authenticated = True
-            st.session_state.username = _email
-            st.session_state.role = _role
-            st.session_state.last_interaction = time.time()
-            cache_session_state(SESSION_ID, "authenticated", True)
-            cache_session_state(SESSION_ID, "username", _email)
-            cache_session_state(SESSION_ID, "role", _role)
-            cache_session_state(SESSION_ID, "last_interaction", time.time())
-            st.query_params.clear()
-            st.rerun()
+            if not is_user_active(_email):
+                st.error("🚨 Account suspended. Please contact your administrator.")
+                st.query_params.clear()
+            else:
+                _role = get_or_create_sso_user(_email)
+                st.session_state.authenticated = True
+                st.session_state.username = _email
+                st.session_state.role = _role
+                st.session_state.last_interaction = time.time()
+                cache_session_state(SESSION_ID, "authenticated", True)
+                cache_session_state(SESSION_ID, "username", _email)
+                cache_session_state(SESSION_ID, "role", _role)
+                cache_session_state(SESSION_ID, "last_interaction", time.time())
+                st.query_params.clear()
+                st.rerun()
         else:
             st.error("🚨 SSO authentication failed. Could not retrieve your email.")
             st.query_params.clear()
@@ -338,6 +344,8 @@ if not st.session_state.get("authenticated", False):
                 is_allowed, error_msg = check_login_rate_limit(username)
                 if not is_allowed:
                     st.error(f"🚨 {error_msg}")
+                elif not is_user_active(username):
+                    st.error("🚨 Account suspended. Please contact your administrator.")
                 elif verify_user(username, password):
                     role = get_user_role(username)
                     if role is None:
@@ -2081,9 +2089,67 @@ else:
     with tab_users:
         st.markdown("🏠 Home > Dashboard > **User Management**")
         st.subheader("👥 User Management")
-        users = get_all_users()
-        if users:
-            st.dataframe(pd.DataFrame(users), use_container_width=True)
+        if user_role == "admin":
+            users = get_all_users()
+            if users:
+                # Table Header
+                col_h1, col_h2, col_h3, col_h4 = st.columns([2, 1, 1, 1])
+                with col_h1:
+                    st.markdown("**Username**")
+                with col_h2:
+                    st.markdown("**Role**")
+                with col_h3:
+                    st.markdown("**Status**")
+                with col_h4:
+                    st.markdown("**Actions**")
+                st.write("---")
+
+                # Table Rows
+                for u in users:
+                    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+                    with c1:
+                        st.write(u["username"])
+                    with c2:
+                        st.write(u["role"].capitalize())
+                    with c3:
+                        is_active = u.get("is_active", True)
+                        if is_active:
+                            st.markdown(
+                                "<span style='color: #28a745; font-weight: bold;'>🟢 Active</span>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                "<span style='color: #dc3545; font-weight: bold;'>🔴 Suspended</span>",
+                                unsafe_allow_html=True,
+                            )
+                    with c4:
+                        if u["username"] == "admin" or u[
+                            "username"
+                        ] == st.session_state.get("username"):
+                            st.button(
+                                "Suspend",
+                                key=f"suspend_btn_{u['username']}",
+                                disabled=True,
+                                use_container_width=True,
+                            )
+                        else:
+                            is_active = u.get("is_active", True)
+                            btn_label = "Suspend" if is_active else "Activate"
+                            if st.button(
+                                btn_label,
+                                key=f"suspend_btn_{u['username']}",
+                                use_container_width=True,
+                            ):
+                                set_user_active_status(u["username"], not is_active)
+                                st.success(
+                                    f"User '{u['username']}' updated successfully!"
+                                )
+                                st.rerun()
+        else:
+            st.warning(
+                "⚠️ Access Denied: User Management is restricted to administrators."
+            )
 
         st.write("---")
         st.subheader("🔐 Two-Factor Authentication (2FA)")

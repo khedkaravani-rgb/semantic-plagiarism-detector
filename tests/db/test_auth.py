@@ -9,8 +9,11 @@ from src.db.auth import (
     disable_2fa,
     enable_2fa,
     get_2fa_status,
+    get_user_active_status,
     get_user_role,
     init_db,
+    is_user_active,
+    set_user_active_status,
     update_password,
     verify_user,
 )
@@ -29,7 +32,8 @@ def db_connection():
                     role     TEXT    NOT NULL DEFAULT 'teacher',
                     tour_completed INTEGER DEFAULT 0,
                     otp_secret TEXT DEFAULT NULL,
-                    two_factor_enabled INTEGER DEFAULT 0
+                    two_factor_enabled INTEGER DEFAULT 0,
+                    is_active INTEGER NOT NULL DEFAULT 1
                 )
             """
     )
@@ -113,3 +117,36 @@ def test_2fa_flow():
     assert secret is None
 
     delete_user(username)
+
+
+def test_suspend_account():
+    username = f"user_{uuid.uuid4().hex[:8]}"
+    add_user(username, "password123")
+
+    # Verify default is active
+    assert get_user_active_status(username) is True
+    assert is_user_active(username) is True
+    assert verify_user(username, "password123") is True
+
+    # Suspend user
+    set_user_active_status(username, False)
+    assert get_user_active_status(username) is False
+    assert is_user_active(username) is False
+    assert verify_user(username, "password123") is False
+
+    # Try suspending default 'admin' user (must raise ValueError)
+    try:
+        add_user("admin", "admin123", "admin")
+    except ValueError:
+        pass
+    with pytest.raises(ValueError, match="The admin account cannot be suspended."):
+        set_user_active_status("admin", False)
+
+    # Reactivate user
+    set_user_active_status(username, True)
+    assert get_user_active_status(username) is True
+    assert is_user_active(username) is True
+    assert verify_user(username, "password123") is True
+
+    delete_user(username)
+    delete_user("admin")

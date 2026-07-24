@@ -157,6 +157,9 @@ from src.visualization.analytics import (
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 
+
+from src.utils.excel_export import export_similarity_matrix_to_excel
+
 try:
     from src.utils.excel_export import export_similarity_matrix_to_excel
     from src.utils.json_export import export_similarity_matrix_to_json
@@ -164,12 +167,17 @@ except ImportError:
     from utils.excel_export import export_similarity_matrix_to_excel
     from utils.json_export import export_similarity_matrix_to_json
 
+
+
+# Initialize corpus database
+
 try:
     from streamlit_tour import Tour
 except ImportError:
     Tour = None
 
 # Initialize databases
+
 init_corpus_db()
 init_db()
 
@@ -527,6 +535,8 @@ unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
 
 
+
+
 def save_preferences_callback():
     if "username" in st.session_state:
         prefs = {
@@ -536,6 +546,7 @@ def save_preferences_callback():
             "theme": st.session_state.get("theme_selector", "Light"),
         }
     update_user_preferences(st.session_state.username, prefs)
+
 
 
 with st.sidebar:
@@ -586,7 +597,18 @@ with st.sidebar:
         set_theme(selected_theme)
         st.rerun()
 
+    # 🎨 Color Map Selection Dropdown (#186)
+    st.markdown("---")
+    st.subheader("🎨 Heatmap Color Map")
+    heatmap_cmap = st.selectbox(
+        "Select Color Scale",
+        options=["OrRd", "viridis", "plasma", "magma", "cividis", "coolwarm", "YlGnBu"],
+        index=0,
+        key="heatmap_cmap_selector",
+    )
+
     if user_role == "admin":
+        st.markdown("---")
         threshold = st.slider(
             get_text("threshold", lang=lang_code),
             min_value=0.0,
@@ -623,7 +645,13 @@ with st.sidebar:
             key="faiss_top_k_slider",
         )
 
+
+        # ── Customizable Chunk Size & Overlap Sliders ─────────────────
+
+        with st.expander("� Ignore Phrases", expanded=False):
+
         with st.expander("✂️ Ignore Phrases", expanded=False):
+
             st.caption(
                 "Enter common template text or standard assignment questions to ignore during analysis. "
                 "These phrases will be removed from documents before chunking and embedding."
@@ -634,6 +662,15 @@ with st.sidebar:
                 help="Each line represents a phrase to ignore.",
                 key="ignore_phrases_textarea",
             )
+
+
+        with st.expander("� OCR Settings", expanded=False):
+            st.caption(
+                "Used only for scanned or image-only PDF pages. "
+                "Text-based PDFs continue to use native extraction."
+            )
+        # ── Customizable Chunk Size & Overlap Sliders (#153) ─────────────────
+
 
         st.markdown("### ✂️ Chunking Settings")
         chunk_size = st.slider(
@@ -846,6 +883,172 @@ with st.sidebar:
         ):
             clear_all_dialog()
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+    else:
+        threshold = PLAGIARISM_THRESHOLD
+        use_chunk_matrix = False
+        faiss_top_k = 5
+        chunk_size = 500
+        chunk_overlap = 50
+        ocr_language = DEFAULT_OCR_LANGUAGE
+        ocr_dpi = DEFAULT_OCR_DPI
+
+    st.markdown("---")
+    unique_classes = ["All Classes"] + get_unique_class_sections()
+
+    selected_class = st.selectbox("Select Class/Section", unique_classes, index=0)
+
+# ── Main UI ───────────────────────────────────────────────────────────────────
+st.title("🔍 Semantic Plagiarism Detection System")
+
+uploaded_files = st.file_uploader(
+    "📂 Upload Assignments",
+    type=["pdf", "docx", "txt"],
+    accept_multiple_files=True,
+    key="file_uploader",
+)
+# ── MAIN APPLICATION SECTIONS (ROLE CHECKED) ──────────────────────────────────
+
+if user_role != "admin":
+    # STANDARD USER VIEW: Student Query / Search Panel Only (No admin PDF uploading)
+    st.subheader("🔎 Secure Student Search Portal")
+    st.caption(
+        "Paste a text snippet below to check its similarity against existing indexed assignments."
+    )
+
+    st.info(
+        "🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access. Your queries are anonymized for privacy."
+    )
+
+    query_text = st.text_area(
+        "Paste a text snippet to check against index:",
+        height=150,
+        placeholder="Paste a paragraph here to check for plagiarism...",
+    )
+
+    if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
+        # Load existing index and registry from database
+        from src.core.faiss_index import build_index_from_matrix
+        from src.db.corpus_db import get_all_embeddings, get_chunk_registry
+
+        with st.spinner("Loading index and searching..."):
+            try:
+                registry = get_chunk_registry()
+                embeddings_matrix = get_all_embeddings()
+
+                if embeddings_matrix.shape[0] == 0:
+                    from src.errors import UI_NO_DOCUMENTS_INDEXED
+
+                    st.warning(UI_NO_DOCUMENTS_INDEXED)
+                else:
+                    # Build index from stored embeddings
+                    faiss_index = build_index_from_matrix(
+                        embeddings_matrix, index_type="auto"
+                    )
+
+                    # Embed the query
+                    from src.core.embedding_model import embed_chunks
+
+                    query_vec = embed_chunks([query_text.strip()])[0]
+
+                    # Search with threshold
+                    faiss_threshold = threshold
+                    results = search_similar_chunks(
+                        query_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k,
+                        threshold=faiss_threshold,
+                    )
+
+                    if not results:
+                        st.success(
+                            "✅ No significant matches found in the assignment database."
+                        )
+                    else:
+                        st.success(
+                            f"Found **{len(results)}** potentially similar passages."
+                        )
+
+                        # Anonymize document names
+                        doc_id_map = {}
+                        anon_counter = 1
+
+                        for record, score in results:
+                            if record.doc_name not in doc_id_map:
+                                doc_id_map[record.doc_name] = (
+                                    f"Document-{anon_counter:03d}"
+                                )
+                                anon_counter += 1
+
+                        # Display anonymized results
+                        for rank, (record, score) in enumerate(results, 1):
+                            anon_doc_name = doc_id_map[record.doc_name]
+                            color = "#ff4b4b" if score >= 0.90 else "#ffa500"
+
+                            with st.expander(
+                                f"#{rank} · {anon_doc_name} (chunk #{record.chunk_index+1}) "
+                                f"— {score:.1%}",
+                                expanded=(rank == 1),
+                            ):
+                                cq, cm = st.columns(2)
+                                with cq:
+                                    st.markdown("**Your query:**")
+                                    st.info(query_text.strip())
+                                with cm:
+                                    st.markdown(
+                                        f"**Matching passage in {anon_doc_name}:**"
+                                    )
+                                    st.warning(record.chunk_text)
+
+                                st.markdown(
+                                    f"<div style='text-align:right;'>"
+                                    f"<span style='background:{color};color:white;padding:3px 12px;"
+                                    f"border-radius:10px;font-size:0.85rem;font-weight:700;'>"
+                                    f"Similarity: {score*100:.1f}%</span></div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                        st.caption(
+                            "🔒 Document names are anonymized to protect student privacy."
+                        )
+
+            except Exception as e:
+                from src.errors import UI_INDEX_LOAD_FAILED
+
+                st.error(UI_INDEX_LOAD_FAILED.format(error=str(e)))
+                st.info(
+                    "Please ensure documents have been indexed by an administrator."
+                )
+else:
+    # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
+
+    # Load or initialize FAISS index
+    if os.path.exists(_INDEX_PATH):
+        faiss_index = load_index(_INDEX_PATH)
+        registry = get_chunk_registry()
+        if faiss_index is not None and faiss_index.ntotal != len(registry):
+            all_embs = get_all_embeddings()
+            if len(all_embs) > 0 and len(all_embs) == len(registry):
+                faiss_index = build_index_from_matrix(all_embs)
+                save_index(faiss_index, _INDEX_PATH)
+            elif len(all_embs) == 0:
+                faiss_index = None
+                registry = []
+        if faiss_index is not None:
+            st.info(f"📂 Loaded existing FAISS index with {faiss_index.ntotal} vectors")
+    else:
+        threshold = DEFAULT_THRESHOLDS.plagiarism
+        use_chunk_matrix = False
+        faiss_top_k = 5
+        chunk_size = 500
+        chunk_overlap = 50
+        ocr_language = DEFAULT_OCR_LANGUAGE
+        ocr_dpi = DEFAULT_OCR_DPI
+        ignore_phrases = ""
+        st.info("ℹ️ Settings configuration is restricted to Administrators.")
 
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if (
@@ -1154,6 +1357,7 @@ from src.security.metadata_stripper import strip_exif_metadata
         accept_multiple_files=True,
         key="file_uploader",
     )
+    # 2. GOOGLE DRIVE IMPORT SECTION
 
     if uploaded_files:
         username = st.session_state.get("username", "anonymous")
@@ -1274,6 +1478,14 @@ from src.security.metadata_stripper import strip_exif_metadata
         fetch_url_btn = st.button(
             "Fetch", key="fetch_url_btn", use_container_width=True
         )
+
+
+    file_bytes_dict = {
+        uploaded_file.name: uploaded_file.getvalue() for uploaded_file in uploaded_files
+    }
+    # 2. GOOGLE DRIVE IMPORT SECTION (#146)
+
+    from src.utils.google_drive import bulk_download_drive_folder
 
     # Clear cached URL result when the user changes the URL field
     if url_input.strip() != st.session_state._last_fetched_url:
@@ -1790,16 +2002,54 @@ from src.security.metadata_stripper import strip_exif_metadata
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
+
+        st.subheader("⚡ FAISS Vector Search")
+
+        if faiss_index is not None:
+            st.info(f"Index total: {faiss_index.ntotal} vectors.")
+        else:
+            st.warning("FAISS index is not initialized.")
+
+
         st.markdown("🏠 Home > Dashboard > **FAISS Chunk Search**")
         st.subheader("⚡ FAISS Chunk Search")
         st.info(f"Index total: {faiss_index.ntotal if faiss_index else 0} vectors.")
+
         faiss_query = st.text_input(
             "Query FAISS Index:",
             placeholder="Type a text snippet to search vector index...",
             key="faiss_query_input",
         )
+
         if st.button("🔍 Run FAISS Search", key="run_faiss_search_btn"):
             if faiss_query.strip() and faiss_index is not None:
+
+                try:
+                    from src.core.embeddings import generate_embeddings  # type: ignore
+                    from src.core.faiss_indexer import search_similar_chunks  # type: ignore
+
+                    q_vec = generate_embeddings([faiss_query.strip()])[0]
+                    q_results = search_similar_chunks(
+                        q_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k if "faiss_top_k" in locals() else 5,
+                        threshold=threshold,
+                    )
+
+                    if q_results:
+                        for rec, score in q_results:
+                            st.markdown(
+                                f"**{rec.doc_name}** (Chunk #{rec.chunk_index}) — Similarity: `{score:.1%}`"
+                            )
+                            st.caption(rec.chunk_text)
+                    else:
+                        st.info("No matching vector chunks found above threshold.")
+                except Exception as err:
+                    st.error(f"FAISS search error: {err}")
+            else:
+                st.warning("Please enter a valid query string.")
+
                 q_vec = embed_chunks([faiss_query.strip()])[0]
                 q_results = search_similar_chunks(
                     q_vec, faiss_index, registry, top_k=faiss_top_k, threshold=threshold
@@ -1813,6 +2063,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                 else:
                     st.info("No matching vector chunks found above threshold.")
 
+
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
         st.markdown("🏠 Home > Dashboard > **Similarity Matrix**")
@@ -1820,7 +2071,12 @@ from src.security.metadata_stripper import strip_exif_metadata
         if active_sim_df is None:
             st.info("Please upload documents to generate a similarity matrix.")
         else:
-
+          
+            # Apply chosen colormap to matrix styling (#186)
+            st.dataframe(
+                active_sim_df.style.background_gradient(cmap=heatmap_cmap).format("{:.4f}"),
+                use_container_width=True,
+            )
             def _highlight(val: Any) -> str:
                 tier = severity_key(float(val))
                 if tier == "high":
@@ -1831,6 +2087,10 @@ from src.security.metadata_stripper import strip_exif_metadata
 
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
             st.dataframe(styled_df, use_container_width=True)
+
+
+
+            # Export options row
 
             col_csv, col_json, col_excel = st.columns(3)
             with col_csv:
@@ -1867,6 +2127,21 @@ from src.security.metadata_stripper import strip_exif_metadata
 
     # ══ TAB 4: HEATMAP & NETWORK ══════════════════════════════════════════════
     with tab_heatmap:
+
+        st.subheader("🗺️ Similarity Heatmap")
+
+        heatmap_fig = plot_similarity_heatmap(
+            active_sim_df,
+            title="Document Semantic Similarity",
+            threshold=threshold,
+            theme_colors=get_colors(),
+            cmap=heatmap_cmap,  # Dynamic colormap support (#186)
+        )
+        st.pyplot(heatmap_fig, use_container_width=True)
+
+
+    # ══ TAB 5: PAIR DRILL-DOWN ══════════════════════════════════════════════════
+
         st.markdown("🏠 Home > Dashboard > **Heatmap & Network**")
         st.subheader(get_text("tab_heatmap", lang=lang_code))
         if active_sim_df is None:
@@ -1976,6 +2251,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                 logger.error(f"Failed to send webhook alert: {e}")
 
     # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
+
     with tab_drill:
         st.markdown("🏠 Home > Dashboard > **Pair Drill-Down**")
         st.subheader("🔬 Pair Drill-Down")
@@ -2010,10 +2286,47 @@ from src.security.metadata_stripper import strip_exif_metadata
                     key="db",
                 )
 
+
+        score = float(active_sim_df.loc[doc_a, doc_b])
+        st.markdown(f"**Overall Similarity:** `{score:.1%}`")
+        st.progress(float(score))
+        st.divider()
+
+        drill_tab_analysis, drill_tab_viewer = st.tabs(
+            ["📊 Chunk Matches & Report", "📄 Document Viewer"]
+        )
+
+        chunks_a = chunked_docs.get(doc_a, [])
+        chunks_b = chunked_docs.get(doc_b, [])
+
+        with drill_tab_analysis:
+            top_pairs = find_most_similar_chunks(
+                chunks_a,
+                chunks_b,
+                embeddings[doc_a],
+                embeddings[doc_b],
+                top_k=5,
+                threshold=threshold,
+            )
+            for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
+                with st.expander(f"#{rank} — Similarity: {sim:.1%}"):
+                    st.write(f"**{doc_a}:** {ca}")
+                    st.write(f"**{doc_b}:** {cb}")
+
+        # --- In-App PDF Preview with Highlighted Matches ---
+        with drill_tab_viewer:
+            st.subheader("📄 In-App PDF Preview with Highlighted Matches")
+            selected_view_doc = st.radio(
+                "Select Document to Preview:",
+                options=[doc_a, doc_b],
+                horizontal=True,
+                key="doc_viewer_select",
+            )
             score = float(active_sim_df.loc[doc_a, doc_b])
             st.markdown(f"**Overall Similarity:** `{score:.1%}`")
             st.progress(float(score))
             st.divider()
+
 
             drill_tab_analysis, drill_tab_viewer = st.tabs(
                 ["📊 Chunk Matches & Report", "📄 Document Viewer"]
@@ -2069,7 +2382,7 @@ from src.security.metadata_stripper import strip_exif_metadata
                 else:
                     st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
-    # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
+  # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
     with tab_analytics:
         st.markdown("🏠 Home > Dashboard > **Analytics Dashboard**")
         st.subheader("📊 Plagiarism Analytics Dashboard")

@@ -133,6 +133,8 @@ from src.db.auth import (
     update_user_preferences,
     verify_user,
 )
+from src.core.export_engine import LMSExportEngine
+from src.db.incidents import get_all_incidents_above_threshold_for_export
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
     get_most_plagiarized_documents,
@@ -1990,6 +1992,26 @@ from src.security.metadata_stripper import strip_exif_metadata
     with tab_warnings:
         st.markdown("🏠 Home > Dashboard > **Warnings**")
         st.subheader(get_text("tab_warnings", lang=lang_code))
+
+        # LMS CSV Export (Issue #305)
+        st.markdown("---")
+        export_col1, export_col2 = st.columns([0.8, 0.2])
+        with export_col1:
+            st.caption("Generate a CSV of flagged incidents for LMS grading.")
+        with export_col2:
+            raw_incidents = get_all_incidents_above_threshold_for_export(threshold=threshold)
+            csv_data = LMSExportEngine.generate_incident_csv(raw_incidents)
+            if csv_data:
+                st.download_button(
+                    label="📥 Export Incident Log",
+                    data=csv_data,
+                    file_name="plagiarism_incident_log.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.button("📥 Export Incident Log", disabled=True, use_container_width=True)
+        st.markdown("---")
 
         if selected_document_id:
             st.info(f"Showing warnings involving: {selected_document_id}")

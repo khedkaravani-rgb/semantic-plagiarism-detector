@@ -18,6 +18,7 @@ load_dotenv()
 
 import numpy as np
 import pandas as pd
+from src.security.metadata_stripper import strip_exif_metadata
 import streamlit as st
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1037,6 +1038,7 @@ else:
     def load_analysis_results_from_db():
         import numpy as np
         import pandas as pd
+from src.security.metadata_stripper import strip_exif_metadata
         from sklearn.metrics.pairwise import cosine_similarity
 
         from src.db.corpus_db import get_all_documents, get_chunk_registry
@@ -1352,9 +1354,8 @@ else:
                             )
 
                             if downloaded_dict:
-                                st.session_state.drive_files_dict.update(
-                                    downloaded_dict
-                                )
+                                scrubbed_drive = {n: strip_exif_metadata(d, n) for n, d in downloaded_dict.items()}
+                                st.session_state.drive_files_dict.update(scrubbed_drive)
                                 st.success(
                                     f"✅ Imported {len(downloaded_names)} files: {', '.join(downloaded_names)}"
                                 )
@@ -1384,7 +1385,7 @@ else:
                             f"⚠️ ZIP file '{f.name}' contains no supported documents (.pdf, .docx, .txt)."
                         )
                     else:
-                        file_bytes_dict.update(zip_files)
+                        file_bytes_dict.update({name: strip_exif_metadata(data, name) for name, data in zip_files.items()})
                 except ValueError as ve:
                     st.error(f"⚠️ Failed to process ZIP archive '{f.name}': {str(ve)}")
                 except (OSError, RuntimeError, TypeError):
@@ -1411,11 +1412,9 @@ else:
                         virtual_filename = (
                             f"{clean_student_name} ({f.name} - Row {idx + 1}).txt"
                         )
-                        file_bytes_dict[virtual_filename] = str(text_val).encode(
-                            "utf-8"
-                        )
+                        file_bytes_dict[virtual_filename] = strip_exif_metadata(str(text_val).encode("utf-8"), virtual_filename)
             else:
-                file_bytes_dict[f.name] = f.read()
+                file_bytes_dict[f.name] = strip_exif_metadata(f.read(), f.name)
             f.seek(0)
 
     # Allow analysis with existing index even without new uploads

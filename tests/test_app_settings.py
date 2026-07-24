@@ -1,3 +1,5 @@
+
+from tests.conftest import MockDataFactory
 import os
 import sys
 
@@ -16,15 +18,9 @@ _MODIFIED_THRESHOLD = 0.70  # within valid slider range [0.0, 0.75]
 _MODIFIED_FAISS_TOP_K = 10  # within valid range [1, 20]
 
 
-def mock_embed_chunks(chunks, batch_size=64):
-    if not chunks:
-        return np.array([])
-    val = 1.0 / (384**0.5)
-    return np.full((len(chunks), 384), val, dtype="float32")
-
 
 @patch("src.core.webhook.send_plagiarism_alert")
-@patch("src.core.embedding_model.embed_chunks", side_effect=mock_embed_chunks)
+@patch("src.core.embedding_model.embed_chunks", side_effect=MockDataFactory.embed_chunks)
 def test_app_settings_reset_to_defaults(mock_embed, mock_webhook):
     """Verify the Reset to Factory Defaults button restores all settings."""
     at = AppTest.from_file("app/streamlit_app.py")

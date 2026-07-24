@@ -97,3 +97,17 @@ def test_2fa_flow():
     assert secret is None
 
     delete_user(username)
+
+
+def test_sqlite_file_lock_exception(mock_db):
+    """Test that acquiring an exclusive lock on SQLite database triggers a clean sqlite3.Error when attempting add_user."""
+    conn = sqlite3.connect(mock_db)
+    conn.execute("BEGIN EXCLUSIVE TRANSACTION")
+    try:
+        with pytest.raises(sqlite3.Error) as exc_info:
+            add_user("locked_user", "password123")
+        assert "Failed to add user" in str(exc_info.value) or "locked" in str(exc_info.value)
+    finally:
+        conn.rollback()
+        conn.close()
+

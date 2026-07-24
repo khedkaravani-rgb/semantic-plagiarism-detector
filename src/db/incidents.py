@@ -160,7 +160,6 @@ def sync_flagged_incidents(
                         timestamp,
                     ),
                 )
-
             conn.commit()
 
             rows = conn.execute(
@@ -248,10 +247,8 @@ def get_high_severity_trends(
     days: int = 30,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
-    """
-    Get daily count of High severity incidents over the specified number of days.
-    Returns list of dicts with 'date' and 'count' keys.
-    """
+    # Get daily count of High severity incidents over the specified number of days.
+    # Returns list of dicts with 'date' and 'count' keys.
     init_incident_db(db_path)
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
@@ -275,10 +272,8 @@ def get_most_plagiarized_documents(
     limit: int = 10,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
-    """
-    Get the most frequently plagiarized documents based on incident count.
-    Returns list of dicts with 'document_name' and 'incident_count' keys.
-    """
+    # Get the most frequently plagiarized documents based on incident count.
+    # Returns list of dicts with 'document_name' and 'incident_count' keys.
     init_incident_db(db_path)
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
@@ -319,7 +314,6 @@ def add_false_positive(
 def get_false_positives(db_path: str | Path = DEFAULT_DB_PATH) -> set[tuple[str, str]]:
     """Returns a set of all normalized dismissed pairs for fast filtering."""
     init_incident_db(db_path)
-
     with closing(sqlite3.connect(str(db_path))) as conn:
         rows = conn.execute(
             "SELECT document_a, document_b FROM false_positives"

@@ -255,7 +255,7 @@ def render_warning_controls(
         )
 
     # Hide low severity warnings when checkbox is enabled
-    display_flags = [_normalise_warning(flag) for flag in flags]
+    display_flags = [_normalise_warning(flag) for flag in filtered_flags]
 
     if hide_low_severity:
         display_flags = [flag for flag in display_flags if flag["severity"] != "Low"]

@@ -1,3 +1,5 @@
+import json
+
 """
 auth.py
 -------
@@ -5,25 +7,21 @@ SQLite-backed authentication with bcrypt password hashing.
 
 Public API
 ----------
-init_db()                            → create tables + seed default admin
-verify_user(username, password)      → bool
-get_user_role(username)              → str | None
-add_user(username, password, role)   → None
-get_all_users()                      → list[dict]
-delete_user(username)                → None
-update_password(username, password)  → None
-get_tour_completed(username)         → bool
+init_db()                          → create tables + seed default admin
+verify_user(username, password)    → bool
+get_user_role(username)            → str | None
+add_user(username, password, role) → None
+get_all_users()                    → list[dict]
+delete_user(username)              → None
+update_password(username, password)→ None
+get_tour_completed(username)       → bool
 set_tour_completed(username, completed) → None
-check_login_rate_limit(username)   → tuple[bool, str | None]
-record_failed_login(username)      → None
-clear_login_attempts(username)     → None
 """
 
-import hashlib
-import json
 import os
-import secrets
 import sqlite3
+
+import bcrypt
 
 from src.db.migrations import migrate_auth_database
 
@@ -31,20 +29,20 @@ _DB_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "users.db")
 )
 
-VALID_ROLES = {"admin", "teacher"}
-
 
 def _connect() -> sqlite3.Connection:
     return sqlite3.connect(_DB_PATH, check_same_thread=False)
 
 
-def _hash_password(password: str, salt: str = None) -> str:
-    """Return a sha256 hash for the given password."""
-    if salt is None:
-        salt = secrets.token_hex(8)
-    # Simple hash for local dev to avoid bcrypt DLL hell
-    pwd_hash = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-    return f"{salt}${pwd_hash}"
+VALID_ROLES = {"admin", "teacher"}
+
+
+def _hash_password(password: str) -> str:
+    """Return a bcrypt hash for the given password."""
+    return bcrypt.hashpw(
+        password.encode(),
+        bcrypt.gensalt(10),
+    ).decode()
 
 
 def _validate_username(username: str) -> str:
@@ -115,18 +113,8 @@ def verify_user(username: str, password: str) -> bool:
         return False
 
     stored_hash = row[0]
-
-    # Handle old bcrypt hashes (mock verification for local dev) or new sha256 hashes
-    if stored_hash.startswith("$2") or stored_hash.startswith("$1"):
-        # We can't verify old bcrypt hashes without the bcrypt library.
-        # So we just accept the default admin password for convenience.
-        if username == "admin" and password == "admin123":
-            return True
-        return False
-
     try:
-        salt, _ = stored_hash.split("$", 1)
-        return stored_hash == _hash_password(password, salt)
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())
     except ValueError:
         return False
 
@@ -319,7 +307,7 @@ def clear_login_attempts(username: str) -> None:
 
 def get_user_preferences(username: str) -> dict:
     """Return user preferences as a dictionary, or empty dict if none exist."""
-    username = _validate_username(username)
+    username = username.lower()
 
     with _connect() as conn:
         row = conn.execute(
@@ -337,7 +325,7 @@ def get_user_preferences(username: str) -> dict:
 
 def update_user_preferences(username: str, preferences: dict) -> None:
     """Serialize and update user preferences in the database."""
-    username = _validate_username(username)
+    username = username.lower()
     prefs_str = json.dumps(preferences)
 
     with _connect() as conn:

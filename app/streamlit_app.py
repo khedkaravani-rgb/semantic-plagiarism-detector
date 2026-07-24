@@ -140,7 +140,7 @@ except ImportError:
 
 try:
     from streamlit_tour import Tour
-except Exception:
+except ImportError:
     Tour = None
 
 # Initialize databases
@@ -417,6 +417,8 @@ def clear_all_dialog():
             if os.path.exists(_INDEX_PATH):
                 try:
                     os.remove(_INDEX_PATH)
+                except OSError as e:
+                    print(f"Error removing FAISS index: {e}")
                 except Exception as e:
                     logger.error(f"Error removing FAISS index: {e}")
 
@@ -426,6 +428,8 @@ def clear_all_dialog():
                 if cache.is_available():
                     cache.delete("faiss:index:corpus_index")
                     cache.clear_pattern("analysis:*")
+            except (ImportError, RuntimeError, ConnectionError) as e:
+                print(f"Error invalidating cache: {e}")
             except Exception as e:
                 logger.error(f"Error invalidating cache: {e}")
 
@@ -729,7 +733,7 @@ with st.sidebar:
                         "❌ The `faker` package is not installed. "
                         "Run `pip install faker` and restart the app."
                     )
-                except Exception as _mock_err:
+                except (ValueError, RuntimeError, TypeError, OSError) as _mock_err:
                     st.error(f"❌ Mock data generation failed: {_mock_err}")
 
         st.markdown('<div class="clear-all-container">', unsafe_allow_html=True)
@@ -852,7 +856,7 @@ if user_role != "admin":
                                 )
 
                         st.caption("🔒 Document names are anonymized to protect student privacy.")
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError, TypeError) as e:
                 st.error(f"🚨 Error loading index: {str(e)}")
 else:
     # ADMIN FULL ACCESS VIEW
@@ -867,6 +871,8 @@ else:
             faiss_index = faiss.deserialize_index(faiss.read_index(index_buffer))
             registry = get_chunk_registry()
             st.info(f"📂 Loaded FAISS index from Redis cache with {faiss_index.ntotal} vectors")
+        except (RuntimeError, ValueError, OSError) as e:
+            print(f"[Redis] Error loading cached index: {e}, falling back to disk")
         except Exception as e:
             logger.warning(f"[Redis] Error loading cached index: {e}, falling back to disk")
 
@@ -880,7 +886,7 @@ else:
                     st.info("No stored embeddings found. An empty FAISS index was initialized.")
             else:
                 st.info(f"Loaded existing FAISS index with {faiss_index.ntotal} vectors.")
-        except Exception:
+        except (RuntimeError, ValueError, OSError):
             faiss_index = None
             registry = []
 
@@ -962,6 +968,8 @@ else:
                 f_registry,
                 ai_probs,
             )
+        except (RuntimeError, ValueError, OSError, TypeError, KeyError) as err:
+            print(f"Error rebuilding analysis results from DB: {err}")
         except Exception as err:
             logger.error(f"Error rebuilding analysis results from DB: {err}")
             return None
@@ -1086,7 +1094,7 @@ else:
                         None if name_col == "None (Use Row Number)" else name_col
                     ),
                 }
-            except Exception as e:
+            except (ValueError, OSError, TypeError, KeyError) as e:
                 st.error(f"❌ Failed to parse CSV file '{f.name}': {str(e)}")
 
     st.markdown("### 🔗 Or Upload via Public URL")
@@ -1132,6 +1140,7 @@ else:
                     st.session_state.url_filename = f"webpage_{_parsed.netloc.replace('.', '_')}.txt"
                     st.session_state._last_fetched_url = url_input.strip()
                     st.success(f"✅ Successfully extracted {len(_fetched_text)} characters from the URL.")
+        # Requires generic catch because extract_text_from_url explicitly raises generic Exception
         except Exception as _e:
             st.error(f"❌ Failed to fetch URL: {str(_e)}")
             st.session_state.url_text = None
@@ -1184,7 +1193,7 @@ else:
                                 st.rerun()
                             else:
                                 st.warning("No supported files found in this Drive folder.")
-                        except Exception as err:
+                        except (RuntimeError, OSError, ValueError, ImportError) as err:
                             st.error(f"🚨 Failed to import from Google Drive: {str(err)}")
 
     # 3. MERGE LOCAL AND DRIVE FILE BYTES
@@ -1206,7 +1215,7 @@ else:
                         file_bytes_dict.update(zip_files)
                 except ValueError as ve:
                     st.error(f"⚠️ Failed to process ZIP archive '{f.name}': {str(ve)}")
-                except Exception:
+                except (OSError, RuntimeError, TypeError):
                     st.error(
                         f"⚠️ Failed to process ZIP archive '{f.name}': Unknown error occurred."
                     )
@@ -1500,7 +1509,7 @@ else:
                     similarity=float(flag["similarity"]),
                 )
                 st.session_state.sent_alerts.add(alert_key)
-            except Exception:
+            except (ConnectionError, RuntimeError, OSError):
                 pass
 
     st.subheader(get_text("analysis_summary", lang=lang_code))
@@ -1596,7 +1605,7 @@ else:
                 st.download_button("Download CSV", active_sim_df.to_csv().encode("utf-8"), "similarity_matrix.csv", "text/csv", use_container_width=True)
             with col_json:
                 json_data = export_similarity_matrix_to_json(active_sim_df).encode("utf-8")
-                st.download_button("⬇️ Download JSON", json_data, "similarity_matrix.json", "application/json", use_container_width=True)
+                st.download_button("⬇️ Download JSON", json_data, "similarity_matrix.json", "application/json", use_container_width=True, key="json_export_button")
             with col_excel:
                 excel_data = export_similarity_matrix_to_excel(active_sim_df, threshold=threshold)
                 st.download_button("Download Excel", excel_data, "similarity_matrix_styled.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
@@ -1802,7 +1811,7 @@ else:
                             base64_pdf = base64.b64encode(highlighted_pdf_bytes).decode("utf-8")
                             pdf_display = f"""<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="850px" type="application/pdf"></iframe>"""
                             st.markdown(pdf_display, unsafe_allow_html=True)
-                        except Exception as err:
+                        except (ValueError, RuntimeError, OSError, TypeError) as err:
                             st.error(f"🚨 Unable to render PDF preview: {str(err)}")
                 else:
                     st.info("PDF Preview is only available for uploaded `.pdf` files.")

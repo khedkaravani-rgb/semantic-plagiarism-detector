@@ -358,7 +358,7 @@ def _should_use_parallel() -> bool:
             and multiprocessing.parent_process() is not None
         ):
             return False
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
     return True
 
@@ -391,6 +391,7 @@ def _parse_pdf_page(
             return _clean_page_text(selected_text)
     except OCRDependencyError:
         raise
+    # Requires generic catch because pdfplumber/pdfminer raise various deeply nested exceptions (e.g. PdfminerException, PDFPasswordIncorrect) for encrypted/malformed PDFs
     except Exception as exc:
         logger.error(f"[document_parser] Error parsing page {page_index}: {exc}")
         return []
@@ -435,7 +436,7 @@ def extract_texts_parallel(
                 results[name] = _extract_single_file_helper(
                     data, name, ocr_language, ocr_dpi
                 )
-            except Exception as exc:
+            except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as exc:
                 errors[name] = exc
         return results, errors
 
@@ -458,10 +459,12 @@ def extract_texts_parallel(
                 try:
                     text = future.result()
                     results[name] = text
-                except Exception as exc:
+                except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as exc:
                     errors[name] = exc
 
         return results, errors
+    except (RuntimeError, OSError) as exc:
+        print(
     except Exception as exc:
         logger.warning(
             f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential extraction..."
@@ -473,7 +476,7 @@ def extract_texts_parallel(
                 results[name] = _extract_single_file_helper(
                     data, name, ocr_language, ocr_dpi
                 )
-            except Exception as e:
+            except (ValueError, TypeError, OSError, KeyError, AttributeError, UnicodeError, RuntimeError) as e:
                 errors[name] = e
         return results, errors
 
@@ -495,6 +498,8 @@ def extract_pdf_metadata(file: PDFInput) -> Dict[str, str]:
             metadata["author"] = doc_metadata.get("author")
             metadata["creation_date"] = doc_metadata.get("creationDate")
             metadata["title"] = doc_metadata.get("title")
+    except (ValueError, RuntimeError, OSError, TypeError) as exc:
+        print(f"[document_parser] Error extracting PDF metadata: {exc}")
     except Exception as exc:
         logger.error(f"[document_parser] Error extracting PDF metadata: {exc}")
 
@@ -538,6 +543,7 @@ def extract_text_from_pdf(
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             num_pages = len(pdf.pages)
+    # Requires generic catch because pdfplumber/pdfminer raise various deeply nested exceptions (e.g. PdfminerException, PDFPasswordIncorrect) for encrypted/malformed PDFs
     except Exception as exc:
         logger.error(f"[document_parser] Error reading PDF: {exc}")
         return ""
@@ -565,6 +571,8 @@ def extract_text_from_pdf(
                     page_lines[page_index] = future.result()
         except OCRDependencyError:
             raise
+        except (RuntimeError, OSError) as exc:
+            print(
         except Exception as exc:
             logger.warning(
                 f"[document_parser] ProcessPoolExecutor failed ({exc}), falling back to sequential page parsing..."
@@ -603,6 +611,8 @@ def extract_text_from_docx(file: PDFInput) -> str:
         doc_file = io.BytesIO(file) if isinstance(file, bytes) else file
         document = docx.Document(doc_file)
         text = "\n\n".join(paragraph.text for paragraph in document.paragraphs)
+    except (ValueError, KeyError, OSError) as exc:
+        print(f"[document_parser] Error reading DOCX: {exc}")
     except Exception as exc:
         logger.error(f"[document_parser] Error reading DOCX: {exc}")
     return text.strip()
@@ -624,6 +634,8 @@ def extract_text_from_txt(file: PDFInput) -> str:
                 if isinstance(data, bytes)
                 else data
             )
+    except (OSError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+        print(f"[document_parser] Error reading TXT: {exc}")
     except Exception as exc:
         logger.error(f"[document_parser] Error reading TXT: {exc}")
     return text.strip()
@@ -683,7 +695,7 @@ def extract_text_from_url(url: str) -> str:
         
     except requests.RequestException as exc:
         raise Exception(f"Failed to fetch URL: {exc}") from exc
-    except Exception as exc:
+    except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
         raise Exception(f"Failed to parse webpage content: {exc}") from exc
 # --- Markdown (.md) support -------------------------------------------------
 #
@@ -785,6 +797,8 @@ def extract_text_from_epub(file: PDFInput) -> str:
 
         return "\n\n".join(text_parts).strip()
 
+    except (ValueError, TypeError, OSError, KeyError) as exc:
+        print(f"[document_parser] Error reading EPUB: {exc}")
     except Exception as exc:
         logger.error(f"[document_parser] Error reading EPUB: {exc}")
         return ""
@@ -849,6 +863,8 @@ def extract_texts(files: list) -> Dict[str, str]:
 
         try:
             files_dict[name] = _read_pdf_bytes(file)
+        except (OSError, TypeError, AttributeError) as exc:
+            print(f"[document_parser] Error reading file data for {name}: {exc}")
         except Exception as exc:
             logger.error(f"[document_parser] Error reading file data for {name}: {exc}")
             files_dict[name] = b""

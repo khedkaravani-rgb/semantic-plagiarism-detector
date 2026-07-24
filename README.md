@@ -63,6 +63,8 @@ similarity, and **FAISS vector search**.
               └────────┘ └────────┘ └────────┘ └───────┘ └──────┘ └───────┘
 ```
 
+>For a detailed explanation of the system components and data flow, see the [Architecture Guide](docs/ARCHITECTURE.md).
+
 ### Module Responsibilities
 
 | Module | Responsibility |

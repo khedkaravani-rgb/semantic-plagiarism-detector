@@ -66,7 +66,6 @@ if missing_env_vars:
         ", ".join(missing_env_vars),
     )
 
-from sklearn.metrics.pairwise import cosine_similarity
 
 from app.theme import (
     back_to_top_html,
@@ -84,7 +83,6 @@ from src.core.document_parser import (
     SUPPORTED_OCR_LANGUAGES,
     OCRDependencyError,
     extract_text,
-    prepare_text_for_embedding,
     remove_ignore_phrases,
 )
 from src.core.embedding_model import embed_chunks, embed_documents
@@ -100,7 +98,6 @@ from src.core.similarity import (
     find_most_similar_chunks,
     flag_plagiarism,
 )
-from src.core.text_chunking import chunk_documents
 from src.core.webhook import send_plagiarism_alert
 from src.i18n.translator import _SUPPORTED_LANGUAGES
 from src.visualization.network_graph import plot_similarity_network
@@ -127,6 +124,7 @@ from src.db import (
     init_corpus_db,
 )
 from src.db.auth import (
+    authenticate_user,
     check_login_rate_limit,
     clear_login_attempts,
     disable_2fa,
@@ -2133,7 +2131,6 @@ if not st.session_state.authenticated:
             st.dataframe(styled_df, use_container_width=True)
 
             # Export options row
-
             col_csv, col_json, col_excel = st.columns(3)
             with col_csv:
                 st.download_button(

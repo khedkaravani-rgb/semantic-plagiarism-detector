@@ -101,7 +101,8 @@ def init_db() -> None:
 
 
 def verify_user(username: str, password: str) -> bool:
-    """Return True if username exists and password matches the stored hash."""
+    """Return True if username exists, password matches the stored hash, and account is active."""
+    init_db()  # Ensure DB is initialized
     try:
         username = _validate_username(username)
         password = _validate_password(password)
@@ -126,6 +127,10 @@ def verify_user(username: str, password: str) -> bool:
     except ValueError:
         return False
 
+        try:
+            return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        except ValueError:
+            return False
 
 # Alias for compatibility
 authenticate_user = verify_user

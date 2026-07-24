@@ -6,6 +6,9 @@ import pytest
 from src.db.auth import (
     add_user,
     delete_user,
+    disable_2fa,
+    enable_2fa,
+    get_2fa_status,
     get_user_role,
     init_db,
     update_password,
@@ -14,23 +17,9 @@ from src.db.auth import (
 
 
 @pytest.fixture(autouse=True)
-def db_connection():
-    conn = sqlite3.connect(":memory:")
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-                CREATE TABLE IF NOT EXISTS users (
-                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT    UNIQUE NOT NULL,
-                    password TEXT    NOT NULL,
-                    role     TEXT    NOT NULL DEFAULT 'teacher'
-                )
-            """
-    )
-    conn.commit()
-    yield conn
-    print("In-memory database ready for testing")
-    conn.close()
+def setup_test_db(mock_db):
+    """Uses the mock_db fixture from conftest.py to isolate DB operations."""
+    yield
 
 
 # Calls the init_db function and then uses verify_user to check if default admin user created
@@ -49,25 +38,32 @@ def test_add_user():
 
 # Adds a user and then checks whether adding same user again raises exception
 def test_duplicate_user():
-    add_user("hnsdf9", "ehns-1")
-    with pytest.raises(sqlite3.IntegrityError):
-        add_user("hnsdf9", "ehns-1")
+    user = f"user_{uuid.uuid4().hex[:8]}"
+    add_user(user, "password123")
+    with pytest.raises((ValueError, sqlite3.IntegrityError)):
+        add_user(user, "password123")
 
 
 # Checks whether adding incorrect password returns False
 def test_verify_user():
-    assert verify_user("hnsdf9", "ehns-1") is True
-    assert verify_user("hnsdf9", "ehns_1") is False
+    user = f"user_{uuid.uuid4().hex[:8]}"
+    add_user(user, "password123")
+    assert verify_user(user, "password123") is True
+    assert verify_user(user, "wrong_pass") is False
 
 
 def test_get_user_role():
-    assert get_user_role("hnsdf9") is not None
-    assert get_user_role("sdgk") is None
+    user = f"user_{uuid.uuid4().hex[:8]}"
+    add_user(user, "password123")
+    assert get_user_role(user) is not None
+    assert get_user_role("non_existent_user_999") is None
 
 
 def test_update_password():
-    update_password("hnsdf9", "sfgxv")
-    assert verify_user("hnsdf9", "sfgxv") is not False
+    user = f"user_{uuid.uuid4().hex[:8]}"
+    add_user(user, "password123")
+    update_password(user, "new_secret_123")
+    assert verify_user(user, "new_secret_123") is not False
 
 
 # Deletes a user and then verifies if it still exists
@@ -76,3 +72,27 @@ def test_update_password():
 def test_delete_user():
     delete_user("hnsdf9")
     assert get_user_role("hnsdf9") is None
+
+
+def test_2fa_flow():
+    username = "test2fauser"
+    add_user(username, "pass123")
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is False
+    assert secret is None
+
+    test_secret = "JBSWY3DPEHPK3PXP"
+    enable_2fa(username, test_secret)
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is True
+    assert secret == test_secret
+
+    disable_2fa(username)
+
+    enabled, secret = get_2fa_status(username)
+    assert enabled is False
+    assert secret is None
+
+    delete_user(username)

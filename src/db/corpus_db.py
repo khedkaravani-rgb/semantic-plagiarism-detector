@@ -91,7 +91,7 @@ def add_document(
     tags: str = None,
 ) -> bool:
     """
-    Insert a new document metadata row.
+    Insert a new document metadata row using parameterized execution.
     Returns True if successfully inserted, False if it already exists.
     """
     try:

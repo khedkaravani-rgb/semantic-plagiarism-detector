@@ -26,6 +26,7 @@ import shutil
 import sys
 import types
 from unittest.mock import MagicMock
+import numpy as np
 
 # ── Redis Test Database Isolation ─────────────────────────────────────────
 # Use a separate Redis database (1 instead of 0) during tests so that running
@@ -35,25 +36,17 @@ os.environ.setdefault("REDIS_DB", "1")
 import pytest
 
 # ── Repository Root Path Bootstrap ────────────────────────────────────────────
-# Resolve the repository root (two levels up from this conftest.py file) and
-# prepend it to sys.path so `import src.*`, `import app.*`, `import utils.*`
-# all resolve correctly regardless of how pytest is invoked.
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.resolve()
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # ── Sentence Transformers Stub ────────────────────────────────────────────────
-# Stub sentence_transformers before any test module imports it.
 if "sentence_transformers" not in sys.modules:
     stub = types.ModuleType("sentence_transformers")
     stub.SentenceTransformer = MagicMock  # type: ignore[attr-defined]
     sys.modules["sentence_transformers"] = stub
 
 # ── Tesseract OCR Availability ────────────────────────────────────────────────
-# Detect whether the Tesseract binary is available on PATH.
-# Tests decorated with @pytest.mark.skipif(not TESSERACT_AVAILABLE, ...)
-# will be gracefully skipped on machines that don't have Tesseract installed
-# (e.g. local developer machines, basic CI environments).
 TESSERACT_AVAILABLE = shutil.which("tesseract") is not None
 
 
@@ -61,3 +54,74 @@ TESSERACT_AVAILABLE = shutil.which("tesseract") is not None
 def sqlite_database_path(tmp_path):
     """Return an isolated SQLite path for migration/database tests."""
     return tmp_path / "test.db"
+
+# ── Consolidated Application Fixtures (Issue #372) ───────────────────────────
+
+@pytest.fixture(autouse=True)
+def clean_test_env():
+    """
+    Globally auto-used fixture that cleans up the FAISS index and SQLite DB 
+    before and after every test, preventing state leakage across test cases.
+    """
+    try:
+        from src.db.corpus_db import clear_all_data
+        clear_all_data()
+    except ImportError:
+        pass
+        
+    index_path = os.path.join(str(_REPO_ROOT), "corpus.index")
+    db_path = os.path.join(str(_REPO_ROOT), "corpus.db")
+    
+    for path in [index_path, db_path]:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    yield
+    try:
+        from src.db.corpus_db import clear_all_data
+        clear_all_data()
+    except ImportError:
+        pass
+    for path in [index_path, db_path]:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+@pytest.fixture
+def dummy_embeddings():
+    """
+    Consolidated dummy embeddings for similarity and core tests.
+    Returns 384-dimensional fake embeddings for 3 documents.
+    """
+    emb_a = np.array([[1.0, 0.0, 0.0], [0.8, 0.6, 0.0]])
+    emb_b = np.array([[0.9, 0.1, 0.0], [0.8, 0.5, 0.0]])
+    emb_c = np.array([[0.0, 0.0, 1.0]])
+    return {"doc_A": emb_a, "doc_B": emb_b, "doc_C": emb_c}
+
+class MockDataFactory:
+    """
+    Generalized factory pattern for generating test mocks.
+    Consolidates multiple disparate mocking functions.
+    """
+    
+    @staticmethod
+    def embed_chunks(chunks, batch_size=64):
+        """Standardized fast embedding mock for streamlit app tests."""
+        if not chunks:
+            return np.array([])
+        val = 1.0 / (384**0.5)
+        return np.full((len(chunks), 384), val, dtype="float32")
+
+@pytest.fixture
+def mock_factory():
+    """Returns the consolidated MockDataFactory for tests."""
+    return MockDataFactory()
+
+@pytest.fixture
+def mock_embed_chunks():
+    """Provides a direct reference to the embed_chunks factory method."""
+    return MockDataFactory.embed_chunks

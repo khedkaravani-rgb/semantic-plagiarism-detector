@@ -510,3 +510,16 @@ def get_or_create_sso_user(email: str, default_role: str = "teacher") -> str:
         conn.commit()
         return role
 
+
+
+
+def get_user_count() -> int:
+    """
+    Returns the total number of registered users in the system.
+    This is highly optimized for fast telemetry lookups.
+    """
+    with _connect() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM users")
+        row = cursor.fetchone()
+        return row[0] if row else 0
+

@@ -39,7 +39,8 @@ def init_corpus_db() -> None:
                 assignment_title TEXT,
                 pdf_author       TEXT,
                 pdf_creation_date TEXT,
-                pdf_title        TEXT
+                pdf_title        TEXT,
+                tags             TEXT
             )
         """
         )
@@ -59,6 +60,8 @@ def init_corpus_db() -> None:
             conn.execute("ALTER TABLE documents ADD COLUMN pdf_creation_date TEXT")
         if "pdf_title" not in columns:
             conn.execute("ALTER TABLE documents ADD COLUMN pdf_title TEXT")
+        if "tags" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN tags TEXT")
 
         conn.execute(
             """
@@ -85,15 +88,16 @@ def add_document(
     pdf_author: str = None,
     pdf_creation_date: str = None,
     pdf_title: str = None,
+    tags: str = None,
 ) -> bool:
     """
-    Insert a new document metadata row.
+    Insert a new document metadata row using parameterized execution.
     Returns True if successfully inserted, False if it already exists.
     """
     try:
         with _connect() as conn:
             conn.execute(
-                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO documents (filename, file_hash, upload_date, class_section, student_name, assignment_title, pdf_author, pdf_creation_date, pdf_title, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     filename,
                     file_hash,
@@ -104,6 +108,7 @@ def add_document(
                     pdf_author,
                     pdf_creation_date,
                     pdf_title,
+                    tags,
                 ),
             )
             conn.commit()
@@ -265,3 +270,28 @@ def get_embedding_count() -> int:
     with _connect() as conn:
         row = conn.execute("SELECT COUNT(1) FROM chunks").fetchone()
     return int(row[0]) if row else 0
+
+
+def get_all_tags() -> list[str]:
+    """Fetches all unique document tags from the database."""
+    try:
+        with _connect() as conn:
+            cursor = conn.execute("SELECT tags FROM documents WHERE tags IS NOT NULL AND tags != ''")
+            all_tags_lists = [row[0] for row in cursor.fetchall()]
+            
+            # Use TagManager to extract unique
+            from src.core.tag_manager import TagManager
+            return TagManager.extract_unique_tags(all_tags_lists)
+    except Exception:
+        return []
+
+
+def get_document_tags(filename: str) -> str:
+    """Fetches the tags string for a specific document."""
+    try:
+        with _connect() as conn:
+            cursor = conn.execute("SELECT tags FROM documents WHERE filename = ?", (filename,))
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else ""
+    except Exception:
+        return ""

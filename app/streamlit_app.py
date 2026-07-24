@@ -90,6 +90,7 @@ from src.core.document_parser import (
     remove_ignore_phrases,
 )
 from src.core.embedding_model import embed_chunks, embed_documents
+from src.core.concurrency import faiss_write_lock
 from src.core.faiss_index import (
     build_index,
     build_index_from_matrix,
@@ -127,6 +128,7 @@ from src.db import (
     get_unique_class_sections,
     init_corpus_db,
 )
+from src.core.telemetry import TelemetryService
 from src.db.auth import (
     check_login_rate_limit,
     clear_login_attempts,
@@ -143,6 +145,8 @@ from src.db.auth import (
     update_user_preferences,
     verify_user,
 )
+from src.core.export_engine import LMSExportEngine
+from src.db.incidents import get_all_incidents_above_threshold_for_export
 from src.db.incidents import (  # noqa: E402
     get_high_severity_trends,
     get_most_plagiarized_documents,
@@ -168,8 +172,10 @@ from src.visualization.analytics import (
 )
 from src.visualization.heatmap import plot_similarity_heatmap  # noqa: E402
 
+
 init_db()
 # Safe import for PDF Highlighting
+from src.utils.excel_export import export_similarity_matrix_to_excel
 try:
 
     from src.utils.pdf_highlighter import highlight_pdf_matches  # type: ignore
@@ -181,15 +187,24 @@ except Exception:
     from src.utils.excel_export import export_similarity_matrix_to_excel
     from src.utils.json_export import export_similarity_matrix_to_json
 except ImportError:
+
+    from utils.excel_export import export_similarity_matrix_to_excel  # type: ignore
+
     from utils.excel_export import export_similarity_matrix_to_excel
     from utils.json_export import export_similarity_matrix_to_json
+
+
+
+# Initialize corpus database
 
 try:
     from streamlit_tour import Tour
 except ImportError:
     Tour = None
 
+
 # Initialize databases
+
 init_corpus_db()
 init_db()
 
@@ -593,6 +608,8 @@ unique_classes = ["All Classes"] + get_unique_class_sections()
 selected_class = "All Classes"
 
 
+
+
 def save_preferences_callback():
     if "username" in st.session_state:
         prefs = {
@@ -604,8 +621,17 @@ def save_preferences_callback():
     update_user_preferences(st.session_state.username, prefs)
 
 
+
 with st.sidebar:
     st.markdown(f"👤 Logged in as **{st.session_state.get('username', '')}**")
+    
+    # Render cached telemetry user count badge
+    try:
+        active_users = TelemetryService.get_active_user_count()
+        st.caption(f"Total System Users: {active_users}")
+    except Exception:
+        pass
+
     if st.button("🚪 Log Out", use_container_width=True):
         import logging
         from datetime import datetime, timezone
@@ -644,7 +670,18 @@ with st.sidebar:
         set_theme(selected_theme)
         st.rerun()
 
+    # 🎨 Color Map Selection Dropdown (#186)
+    st.markdown("---")
+    st.subheader("🎨 Heatmap Color Map")
+    heatmap_cmap = st.selectbox(
+        "Select Color Scale",
+        options=["OrRd", "viridis", "plasma", "magma", "cividis", "coolwarm", "YlGnBu"],
+        index=0,
+        key="heatmap_cmap_selector",
+    )
+
     if user_role == "admin":
+        st.markdown("---")
         threshold = st.slider(
             get_text("threshold", lang=lang_code),
             min_value=0.0,
@@ -681,7 +718,13 @@ with st.sidebar:
             key="faiss_top_k_slider",
         )
 
+
+        # ── Customizable Chunk Size & Overlap Sliders ─────────────────
+
+        with st.expander("� Ignore Phrases", expanded=False):
+
         with st.expander("✂️ Ignore Phrases", expanded=False):
+
             st.caption(
                 "Enter common template text or standard assignment questions to ignore during analysis. "
                 "These phrases will be removed from documents before chunking and embedding."
@@ -692,6 +735,15 @@ with st.sidebar:
                 help="Each line represents a phrase to ignore.",
                 key="ignore_phrases_textarea",
             )
+
+
+        with st.expander("� OCR Settings", expanded=False):
+            st.caption(
+                "Used only for scanned or image-only PDF pages. "
+                "Text-based PDFs continue to use native extraction."
+            )
+        # ── Customizable Chunk Size & Overlap Sliders (#153) ─────────────────
+
 
         st.markdown("### ✂️ Chunking Settings")
         chunk_size = st.slider(
@@ -904,6 +956,172 @@ with st.sidebar:
         ):
             clear_all_dialog()
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+    else:
+        threshold = PLAGIARISM_THRESHOLD
+        use_chunk_matrix = False
+        faiss_top_k = 5
+        chunk_size = 500
+        chunk_overlap = 50
+        ocr_language = DEFAULT_OCR_LANGUAGE
+        ocr_dpi = DEFAULT_OCR_DPI
+
+    st.markdown("---")
+    unique_classes = ["All Classes"] + get_unique_class_sections()
+
+    selected_class = st.selectbox("Select Class/Section", unique_classes, index=0)
+
+# ── Main UI ───────────────────────────────────────────────────────────────────
+st.title("🔍 Semantic Plagiarism Detection System")
+
+uploaded_files = st.file_uploader(
+    "📂 Upload Assignments",
+    type=["pdf", "docx", "txt"],
+    accept_multiple_files=True,
+    key="file_uploader",
+)
+# ── MAIN APPLICATION SECTIONS (ROLE CHECKED) ──────────────────────────────────
+
+if user_role != "admin":
+    # STANDARD USER VIEW: Student Query / Search Panel Only (No admin PDF uploading)
+    st.subheader("🔎 Secure Student Search Portal")
+    st.caption(
+        "Paste a text snippet below to check its similarity against existing indexed assignments."
+    )
+
+    st.info(
+        "🔒 Note: Direct assignment uploads and detailed breakdown panels are restricted to Administrator access. Your queries are anonymized for privacy."
+    )
+
+    query_text = st.text_area(
+        "Paste a text snippet to check against index:",
+        height=150,
+        placeholder="Paste a paragraph here to check for plagiarism...",
+    )
+
+    if st.button("🔍 Run Quick Verification", key="user_query") and query_text.strip():
+        # Load existing index and registry from database
+        from src.core.faiss_index import build_index_from_matrix
+        from src.db.corpus_db import get_all_embeddings, get_chunk_registry
+
+        with st.spinner("Loading index and searching..."):
+            try:
+                registry = get_chunk_registry()
+                embeddings_matrix = get_all_embeddings()
+
+                if embeddings_matrix.shape[0] == 0:
+                    from src.errors import UI_NO_DOCUMENTS_INDEXED
+
+                    st.warning(UI_NO_DOCUMENTS_INDEXED)
+                else:
+                    # Build index from stored embeddings
+                    faiss_index = build_index_from_matrix(
+                        embeddings_matrix, index_type="auto"
+                    )
+
+                    # Embed the query
+                    from src.core.embedding_model import embed_chunks
+
+                    query_vec = embed_chunks([query_text.strip()])[0]
+
+                    # Search with threshold
+                    faiss_threshold = threshold
+                    results = search_similar_chunks(
+                        query_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k,
+                        threshold=faiss_threshold,
+                    )
+
+                    if not results:
+                        st.success(
+                            "✅ No significant matches found in the assignment database."
+                        )
+                    else:
+                        st.success(
+                            f"Found **{len(results)}** potentially similar passages."
+                        )
+
+                        # Anonymize document names
+                        doc_id_map = {}
+                        anon_counter = 1
+
+                        for record, score in results:
+                            if record.doc_name not in doc_id_map:
+                                doc_id_map[record.doc_name] = (
+                                    f"Document-{anon_counter:03d}"
+                                )
+                                anon_counter += 1
+
+                        # Display anonymized results
+                        for rank, (record, score) in enumerate(results, 1):
+                            anon_doc_name = doc_id_map[record.doc_name]
+                            color = "#ff4b4b" if score >= 0.90 else "#ffa500"
+
+                            with st.expander(
+                                f"#{rank} · {anon_doc_name} (chunk #{record.chunk_index+1}) "
+                                f"— {score:.1%}",
+                                expanded=(rank == 1),
+                            ):
+                                cq, cm = st.columns(2)
+                                with cq:
+                                    st.markdown("**Your query:**")
+                                    st.info(query_text.strip())
+                                with cm:
+                                    st.markdown(
+                                        f"**Matching passage in {anon_doc_name}:**"
+                                    )
+                                    st.warning(record.chunk_text)
+
+                                st.markdown(
+                                    f"<div style='text-align:right;'>"
+                                    f"<span style='background:{color};color:white;padding:3px 12px;"
+                                    f"border-radius:10px;font-size:0.85rem;font-weight:700;'>"
+                                    f"Similarity: {score*100:.1f}%</span></div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                        st.caption(
+                            "🔒 Document names are anonymized to protect student privacy."
+                        )
+
+            except Exception as e:
+                from src.errors import UI_INDEX_LOAD_FAILED
+
+                st.error(UI_INDEX_LOAD_FAILED.format(error=str(e)))
+                st.info(
+                    "Please ensure documents have been indexed by an administrator."
+                )
+else:
+    # ADMINISTRATOR ACCESS: Full Upload Pipeline & Evaluation Dashboards
+
+    # Load or initialize FAISS index
+    if os.path.exists(_INDEX_PATH):
+        faiss_index = load_index(_INDEX_PATH)
+        registry = get_chunk_registry()
+        if faiss_index is not None and faiss_index.ntotal != len(registry):
+            all_embs = get_all_embeddings()
+            if len(all_embs) > 0 and len(all_embs) == len(registry):
+                faiss_index = build_index_from_matrix(all_embs)
+                save_index(faiss_index, _INDEX_PATH)
+            elif len(all_embs) == 0:
+                faiss_index = None
+                registry = []
+        if faiss_index is not None:
+            st.info(f"📂 Loaded existing FAISS index with {faiss_index.ntotal} vectors")
+    else:
+        threshold = DEFAULT_THRESHOLDS.plagiarism
+        use_chunk_matrix = False
+        faiss_top_k = 5
+        chunk_size = 500
+        chunk_overlap = 50
+        ocr_language = DEFAULT_OCR_LANGUAGE
+        ocr_dpi = DEFAULT_OCR_DPI
+        ignore_phrases = ""
+        st.info("ℹ️ Settings configuration is restricted to Administrators.")
 
 # ── Onboarding Tour for First-Time Admin Users ───────────────────────────────────
 if (
@@ -1241,6 +1459,7 @@ from src.security.metadata_stripper import strip_exif_metadata
         accept_multiple_files=True,
         key="file_uploader",
     )
+    # 2. GOOGLE DRIVE IMPORT SECTION
 
     if uploaded_files:
         username = st.session_state.get("username", "anonymous")
@@ -1361,6 +1580,14 @@ from src.security.metadata_stripper import strip_exif_metadata
         fetch_url_btn = st.button(
             "Fetch", key="fetch_url_btn", use_container_width=True
         )
+
+
+    file_bytes_dict = {
+        uploaded_file.name: uploaded_file.getvalue() for uploaded_file in uploaded_files
+    }
+    # 2. GOOGLE DRIVE IMPORT SECTION (#146)
+
+    from src.utils.google_drive import bulk_download_drive_folder
 
     # Clear cached URL result when the user changes the URL field
     if url_input.strip() != st.session_state._last_fetched_url:
@@ -1506,12 +1733,23 @@ if not st.session_state.authenticated:
                             )
 
 
-    # 3. MERGE LOCAL AND DRIVE FILE BYTES
+   
+    # 3. MERGE LOCAL AND DRIVE FILE BYTES & ENFORCE 10MB FILE SIZE LIMIT (#169)
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB limit
     file_bytes_dict = {}
     if uploaded_files:
         # Re-initialize to handle zip/csv extraction correctly instead of raw bytes
         file_bytes_dict = {}
         for f in uploaded_files:
+
+            if f.size > MAX_FILE_SIZE_BYTES:
+                st.error(
+                    f"⚠️ File **'{f.name}'** exceeds the maximum size limit of 10MB ({f.size / (1024 * 1024):.2f}MB). Please upload a smaller file."
+                )
+            else:
+                file_bytes_dict[f.name] = f.read()
+                f.seek(0)
+
             if f.name.lower().endswith(".zip"):
                 try:
                     from src.utils.zip_processor import process_zip_file
@@ -1554,6 +1792,7 @@ if not st.session_state.authenticated:
                 file_bytes_dict[f.name] = strip_exif_metadata(f.read(), f.name)
             f.seek(0)
 
+
     # Allow analysis with existing index even without new uploads
     # Read URL result from session state (populated by the Fetch button above)
     url_text = st.session_state.url_text
@@ -1584,7 +1823,13 @@ if not st.session_state.authenticated:
             ai_probabilities = st.session_state.analysis_results[7]
 
     if st.session_state.drive_files_dict:
-        file_bytes_dict.update(st.session_state.drive_files_dict)
+        for g_name, g_bytes in st.session_state.drive_files_dict.items():
+            if len(g_bytes) > MAX_FILE_SIZE_BYTES:
+                st.error(
+                    f"⚠️ Google Drive file **'{g_name}'** exceeds the maximum size limit of 10MB ({len(g_bytes) / (1024 * 1024):.2f}MB)."
+                )
+            else:
+                file_bytes_dict[g_name] = g_bytes
 
     # 4. PIPELINE STOP CHECK
     if len(file_bytes_dict) < 2 and url_text is None:
@@ -1592,7 +1837,7 @@ if not st.session_state.authenticated:
             st.markdown(
                 empty_state_html(
                     "Waiting for Files",
-                    "Please upload or import from Drive at least 2 PDF, DOCX, or TXT assignments to begin.",
+                    "Please upload or import from Drive at least 2 PDF, DOCX, or TXT assignments (under 10MB each) to begin.",
                     "📂",
                 ),
                 unsafe_allow_html=True,
@@ -1643,6 +1888,10 @@ if uploaded_files:
             "Default Assignment Title", value="Assignment 1"
         )
 
+    col_tags = st.columns(1)[0]
+    with col_tags:
+        batch_tags = st.text_input("Tags (comma separated)", placeholder="#hw1, #draft")
+
     metadata_dict = {}
     for filename in file_bytes_dict.keys():
         # Check if this filename is a virtual CSV document
@@ -1667,6 +1916,7 @@ if uploaded_files:
                 "student_name": student_name,
                 "class_section": batch_class.strip(),
                 "assignment_title": batch_assignment.strip(),
+                "tags": batch_tags.strip(),
             }
         else:
             base_name = os.path.splitext(filename)[0]
@@ -1693,6 +1943,7 @@ if uploaded_files:
                     "student_name": student_name.strip(),
                     "class_section": class_section.strip(),
                     "assignment_title": assignment_title.strip(),
+                    "tags": batch_tags.strip(),
                 }
 
     if url_filename:
@@ -1716,7 +1967,8 @@ if uploaded_files:
                 "student_name": student_name.strip(),
                 "class_section": class_section.strip(),
                 "assignment_title": assignment_title.strip(),
-            }
+                    "tags": batch_tags.strip(),
+                }
 
     @st.cache_data(show_spinner=False)
     def run_pipeline(
@@ -1956,6 +2208,23 @@ if parsed_file_texts and not encrypted_files_detected:
                     ai_probabilities,
                 ) = analysis_results
                 st.session_state.analysis_results = analysis_results
+
+                # Save metadata to DB
+                from src.db.corpus_db import add_document
+                from src.core.tag_manager import TagManager
+                for filename, meta in metadata_dict.items():
+                    try:
+                        parsed_tags = TagManager.parse_tags(meta.get("tags", ""))
+                        add_document(
+                            filename=filename,
+                            file_hash=filename,
+                            class_section=meta.get("class_section", ""),
+                            student_name=meta.get("student_name", ""),
+                            assignment_title=meta.get("assignment_title", ""),
+                            tags=parsed_tags
+                        )
+                    except Exception:
+                        pass
         except OCRFileBatchError as exc:
             from src.errors import OCR_DEPENDENCIES_MISSING
 
@@ -1985,6 +2254,21 @@ if parsed_file_texts and not encrypted_files_detected:
         ]
     else:
         filtered_flags = flags
+
+    from src.core.tag_manager import TagManager
+    from src.db.corpus_db import get_document_tags
+    
+    # Fetch tags for filtering
+    active_tag = st.session_state.get("selected_tag", "All Tags")
+    if active_tag != "All Tags":
+        flagged_tags_filtered = []
+        for flag in filtered_flags:
+            tags_a = get_document_tags(flag["doc_a"])
+            tags_b = get_document_tags(flag["doc_b"])
+            # Include if EITHER document has the selected tag
+            if TagManager.has_matching_tag(tags_a, active_tag) or TagManager.has_matching_tag(tags_b, active_tag):
+                flagged_tags_filtered.append(flag)
+        filtered_flags = flagged_tags_filtered
 
     # ── Summary Metrics ───────────────────────────────────────────────────────────
     if len(file_bytes_dict) < 2 and url_text is None:
@@ -2057,6 +2341,26 @@ if parsed_file_texts and not encrypted_files_detected:
         st.markdown("🏠 Home > Dashboard > **Warnings**")
         st.subheader(get_text("tab_warnings", lang=lang_code))
 
+        # LMS CSV Export (Issue #305)
+        st.markdown("---")
+        export_col1, export_col2 = st.columns([0.8, 0.2])
+        with export_col1:
+            st.caption("Generate a CSV of flagged incidents for LMS grading.")
+        with export_col2:
+            raw_incidents = get_all_incidents_above_threshold_for_export(threshold=threshold)
+            csv_data = LMSExportEngine.generate_incident_csv(raw_incidents)
+            if csv_data:
+                st.download_button(
+                    label="📥 Export Incident Log",
+                    data=csv_data,
+                    file_name="plagiarism_incident_log.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.button("📥 Export Incident Log", disabled=True, use_container_width=True)
+        st.markdown("---")
+
         if selected_document_id:
             st.info(f"Showing warnings involving: {selected_document_id}")
             if st.button("Clear Document Filter"):
@@ -2069,16 +2373,54 @@ if parsed_file_texts and not encrypted_files_detected:
 
     # ══ TAB 2: FAISS ══════════════════════════════════════════════════════════
     with tab_faiss:
+
+        st.subheader("⚡ FAISS Vector Search")
+
+        if faiss_index is not None:
+            st.info(f"Index total: {faiss_index.ntotal} vectors.")
+        else:
+            st.warning("FAISS index is not initialized.")
+
+
         st.markdown("🏠 Home > Dashboard > **FAISS Chunk Search**")
         st.subheader("⚡ FAISS Chunk Search")
         st.info(f"Index total: {faiss_index.ntotal if faiss_index else 0} vectors.")
+
         faiss_query = st.text_input(
             "Query FAISS Index:",
             placeholder="Type a text snippet to search vector index...",
             key="faiss_query_input",
         )
+
         if st.button("🔍 Run FAISS Search", key="run_faiss_search_btn"):
             if faiss_query.strip() and faiss_index is not None:
+
+                try:
+                    from src.core.embeddings import generate_embeddings  # type: ignore
+                    from src.core.faiss_indexer import search_similar_chunks  # type: ignore
+
+                    q_vec = generate_embeddings([faiss_query.strip()])[0]
+                    q_results = search_similar_chunks(
+                        q_vec,
+                        faiss_index,
+                        registry,
+                        top_k=faiss_top_k if "faiss_top_k" in locals() else 5,
+                        threshold=threshold,
+                    )
+
+                    if q_results:
+                        for rec, score in q_results:
+                            st.markdown(
+                                f"**{rec.doc_name}** (Chunk #{rec.chunk_index}) — Similarity: `{score:.1%}`"
+                            )
+                            st.caption(rec.chunk_text)
+                    else:
+                        st.info("No matching vector chunks found above threshold.")
+                except Exception as err:
+                    st.error(f"FAISS search error: {err}")
+            else:
+                st.warning("Please enter a valid query string.")
+
                 q_vec = embed_chunks([faiss_query.strip()])[0]
                 q_results = search_similar_chunks(
                     q_vec, faiss_index, registry, top_k=faiss_top_k, threshold=threshold
@@ -2091,6 +2433,7 @@ if parsed_file_texts and not encrypted_files_detected:
                         st.caption(rec.chunk_text)
                 else:
                     st.info("No matching vector chunks found above threshold.")
+
 
     # ══ TAB 3: MATRIX ═════════════════════════════════════════════════════════
     with tab_matrix:
@@ -2106,6 +2449,7 @@ if parsed_file_texts and not encrypted_files_detected:
             st.info("Please upload documents to generate a similarity matrix.")
 
         else:
+
             for i in range(len(doc_names)):
                 for j in range(i + 1, len(doc_names)):
                     score = sim_matrix[i][j]
@@ -2127,6 +2471,14 @@ if parsed_file_texts and not encrypted_files_detected:
             file_name="similarity_matrix.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
+
+          
+            # Apply chosen colormap to matrix styling (#186)
+            st.dataframe(
+                active_sim_df.style.background_gradient(cmap=heatmap_cmap).format("{:.4f}"),
+                use_container_width=True,
+            )
+
             def _highlight(val: Any) -> str:
                 tier = severity_key(float(val))
                 if tier == "high":
@@ -2137,6 +2489,10 @@ if parsed_file_texts and not encrypted_files_detected:
 
             styled_df = active_sim_df.style.format("{:.4f}").map(_highlight)
             st.dataframe(styled_df, use_container_width=True)
+
+
+
+            # Export options row
 
             col_csv, col_json, col_excel = st.columns(3)
             with col_csv:
@@ -2173,6 +2529,21 @@ if parsed_file_texts and not encrypted_files_detected:
 
     # ══ TAB 4: HEATMAP & NETWORK ══════════════════════════════════════════════
     with tab_heatmap:
+
+        st.subheader("🗺️ Similarity Heatmap")
+
+        heatmap_fig = plot_similarity_heatmap(
+            active_sim_df,
+            title="Document Semantic Similarity",
+            threshold=threshold,
+            theme_colors=get_colors(),
+            cmap=heatmap_cmap,  # Dynamic colormap support (#186)
+        )
+        st.pyplot(heatmap_fig, use_container_width=True)
+
+
+    # ══ TAB 5: PAIR DRILL-DOWN ══════════════════════════════════════════════════
+
         st.markdown("🏠 Home > Dashboard > **Heatmap & Network**")
         st.subheader(get_text("tab_heatmap", lang=lang_code))
         if active_sim_df is None:
@@ -2282,6 +2653,7 @@ if parsed_file_texts and not encrypted_files_detected:
                 logger.error(f"Failed to send webhook alert: {e}")
 
     # ══ TAB 5: PAIR DRILL-DOWN ════════════════════════════════════════════════
+
     with tab_drill:
         st.markdown("🏠 Home > Dashboard > **Pair Drill-Down**")
         st.subheader("🔬 Pair Drill-Down")
@@ -2324,6 +2696,7 @@ if parsed_file_texts and not encrypted_files_detected:
 
         drill_tab_analysis, drill_tab_viewer = st.tabs(
             ["📊 Chunk Matches & Report", "📄 Document Viewer"]
+
 
         )
 
@@ -2414,10 +2787,41 @@ elif not file_dict:
             else:
                 st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
+
+        )
+
+        chunks_a = chunked_docs.get(doc_a, [])
+        chunks_b = chunked_docs.get(doc_b, [])
+
+        with drill_tab_analysis:
+            top_pairs = find_most_similar_chunks(
+                chunks_a,
+                chunks_b,
+                embeddings[doc_a],
+                embeddings[doc_b],
+                top_k=5,
+                threshold=threshold,
+            )
+            for rank, (ca, cb, sim) in enumerate(top_pairs, 1):
+                with st.expander(f"#{rank} — Similarity: {sim:.1%}"):
+                    st.write(f"**{doc_a}:** {ca}")
+                    st.write(f"**{doc_b}:** {cb}")
+
+        # --- In-App PDF Preview with Highlighted Matches ---
+        with drill_tab_viewer:
+            st.subheader("📄 In-App PDF Preview with Highlighted Matches")
+            selected_view_doc = st.radio(
+                "Select Document to Preview:",
+                options=[doc_a, doc_b],
+                horizontal=True,
+                key="doc_viewer_select",
+            )
+
             score = float(active_sim_df.loc[doc_a, doc_b])
             st.markdown(f"**Overall Similarity:** `{score:.1%}`")
             st.progress(float(score))
             st.divider()
+
 
             drill_tab_analysis, drill_tab_viewer = st.tabs(
                 ["📊 Chunk Matches & Report", "📄 Document Viewer"]
@@ -2474,7 +2878,10 @@ elif not file_dict:
                     st.info("PDF Preview is only available for uploaded `.pdf` files.")
 
 
-    # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
+
+
+  # ══ TAB 6: Analytics ═════════════════════════════════════════════════════════
+
     with tab_analytics:
         st.markdown("🏠 Home > Dashboard > **Analytics Dashboard**")
         st.subheader("📊 Plagiarism Analytics Dashboard")
@@ -2653,7 +3060,7 @@ _latest_tag: str | None = st.session_state["_update_check_tag"]
 
 _footer_col1, _footer_col2 = st.columns([3, 1])
 with _footer_col1:
-    st.caption(f"🎓 Semantic Plagiarism Detection System · v{APP_VERSION} · Streamlit")
+    st.caption(f"🎓 Semantic Plagiarism Detection System · v{APP_VERSION} · Streamlit · [🐛 Report Bug / Feedback](https://github.com/Ganesh-403/semantic-plagiarism-detector/issues)")
 with _footer_col2:
     if _latest_tag:
         st.markdown(
